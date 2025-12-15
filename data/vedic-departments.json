@@ -1,0 +1,86 @@
+[
+  {
+    "name": "Rigveda – Shaakal",
+    "code": "RIGVEDA_SHAKAL",
+    "description": "Rigveda Shaakal - First Veda with Shaakal recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Krishna Yajurveda – Taittiriya",
+    "code": "KRISHNA_YAJUR_T",
+    "description": "Krishna Yajurveda Taittiriya - Black Yajurveda with Taittiriya recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Shukla Yajurveda – Kanva",
+    "code": "SHUKLA_YAJUR_K",
+    "description": "Shukla Yajurveda Kanva - White Yajurveda with Kanva recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Shukla Yajurveda – Madhyandina",
+    "code": "SHUKLA_YAJUR_M",
+    "description": "Shukla Yajurveda Madhyandina - White Yajurveda with Madhyandina recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Samaveda – Ranayaneeya",
+    "code": "SAMAVEDA_R",
+    "description": "Samaveda Ranayaneeya - Third Veda with Ranayaneeya recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Samaveda – Kauthuma",
+    "code": "SAMAVEDA_K",
+    "description": "Samaveda Kauthuma - Third Veda with Kauthuma recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Atharvaveda – Shaunaka",
+    "code": "ATHARVAVEDA_S",
+    "description": "Atharvaveda Shaunaka - Fourth Veda with Shaunaka recension",
+    "isActive": true,
+    "settings": {
+      "maxStudentsPerBatch": 60,
+      "minStudentsPerBatch": 20,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  }
+]

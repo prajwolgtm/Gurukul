@@ -1,0 +1,79 @@
+[
+  {
+    "name": "Dept 1",
+    "code": "DEPT001",
+    "description": "First Department - Vedic Studies",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 50,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Dept 2", 
+    "code": "DEPT002",
+    "description": "Second Department - Sanskrit Literature",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 45,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Dept 3",
+    "code": "DEPT003", 
+    "description": "Third Department - Philosophy & Logic",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 40,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Dept 4",
+    "code": "DEPT004",
+    "description": "Fourth Department - Mathematics & Astronomy",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 35,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Dept 5",
+    "code": "DEPT005",
+    "description": "Fifth Department - Medicine & Ayurveda",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 30,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Dept 6",
+    "code": "DEPT006",
+    "description": "Sixth Department - Arts & Culture",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 40,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  },
+  {
+    "name": "Dept 7",
+    "code": "DEPT007",
+    "description": "Seventh Department - Modern Sciences",
+    "isActive": true,
+    "settings": {
+      "maxStudents": 35,
+      "allowSubDepartments": true,
+      "allowMultipleBatches": true
+    }
+  }
+]

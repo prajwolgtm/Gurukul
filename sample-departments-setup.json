@@ -1,0 +1,79 @@
+{
+  "departments": [
+    {
+      "name": "Science and Technology",
+      "code": "SCI",
+      "description": "Mathematics, Physics, Chemistry, Biology, Computer Science",
+      "subDepartments": [
+        { "name": "Computer Science", "code": "CS" },
+        { "name": "Mathematics", "code": "MATH" },
+        { "name": "Physics", "code": "PHY" }
+      ],
+      "directBatches": [
+        { "name": "General Science A", "code": "GEN-A", "academicYear": "2024-25" },
+        { "name": "General Science B", "code": "GEN-B", "academicYear": "2024-25" }
+      ]
+    },
+    {
+      "name": "Commerce and Business",
+      "code": "COM",
+      "description": "Accounting, Business Studies, Economics, Statistics",
+      "subDepartments": [
+        { "name": "Accounting", "code": "ACC" },
+        { "name": "Business Administration", "code": "BBA" }
+      ],
+      "directBatches": [
+        { "name": "Commerce A", "code": "COM-A", "academicYear": "2024-25" },
+        { "name": "Commerce B", "code": "COM-B", "academicYear": "2024-25" }
+      ]
+    },
+    {
+      "name": "Arts and Humanities",
+      "code": "ARTS",
+      "description": "Literature, History, Geography, Political Science, Psychology",
+      "subDepartments": [
+        { "name": "Literature", "code": "LIT" },
+        { "name": "Social Sciences", "code": "SOC" }
+      ],
+      "directBatches": [
+        { "name": "Arts A", "code": "ART-A", "academicYear": "2024-25" }
+      ]
+    },
+    {
+      "name": "Engineering and Technology",
+      "code": "ENGG",
+      "description": "Mechanical, Electrical, Civil, Electronics Engineering",
+      "subDepartments": [
+        { "name": "Mechanical Engineering", "code": "MECH" },
+        { "name": "Electrical Engineering", "code": "ELEC" },
+        { "name": "Civil Engineering", "code": "CIVIL" }
+      ]
+    },
+    {
+      "name": "Medical and Health Sciences",
+      "code": "MED",
+      "description": "Medicine, Nursing, Pharmacy, Allied Health",
+      "subDepartments": [
+        { "name": "Medicine", "code": "MBBS" },
+        { "name": "Nursing", "code": "NURS" }
+      ]
+    },
+    {
+      "name": "Applied Sciences",
+      "code": "APPL",
+      "description": "Agriculture, Biotechnology, Environmental Science",
+      "subDepartments": [
+        { "name": "Agriculture", "code": "AGRI" },
+        { "name": "Biotechnology", "code": "BIOTECH" }
+      ]
+    },
+    {
+      "name": "Foundation Studies",
+      "code": "FOUND",
+      "description": "Pre-university, Remedial courses, Basic sciences",
+      "directBatches": [
+        { "name": "Foundation Year", "code": "FOUND-1", "academicYear": "2024-25" }
+      ]
+    }
+  ]
+} 
