@@ -5,6 +5,14 @@ import AttendanceSession from '../models/AttendanceSession.js';
 import { auth } from '../middleware/auth.js';
 import { permit } from '../middleware/rbac.js';
 import { ROLES } from '../utils/roles.js';
+import { generateDailyAttendanceReport } from '../utils/pdfGenerator.js';
+import XLSX from 'xlsx';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
@@ -640,6 +648,279 @@ router.get('/report', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARETAKER
     res.status(500).json({
       success: false,
       message: 'Failed to get attendance report',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/attendance/report/daily/:date/pdf
+// @desc    Download daily attendance report as PDF (Admin/Principal/Caretaker)
+// @access  Private
+router.get('/report/daily/:date/pdf', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARETAKER), async (req, res) => {
+  try {
+    const { date } = req.params;
+    const attendanceDate = new Date(date);
+    attendanceDate.setHours(0, 0, 0, 0);
+    
+    // Get all active students
+    const activeStudents = await Student.find({
+      isActive: true,
+      status: { $ne: 'leftout' }
+    }).select('_id fullName admissionNo').lean();
+    
+    // Get attendance records for the date
+    const attendanceRecords = await DailyAttendance.find({
+      attendanceDate: {
+        $gte: attendanceDate,
+        $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000)
+      },
+      student: { $in: activeStudents.map(s => s._id) }
+    }).populate({
+      path: 'student',
+      select: 'fullName admissionNo',
+      match: { isActive: true, status: { $ne: 'leftout' } }
+    }).lean();
+    
+    // Filter valid records
+    const validAttendanceRecords = attendanceRecords.filter(record => record.student !== null && record.student !== undefined);
+    
+    // Merge with all active students
+    const attendanceMap = new Map();
+    validAttendanceRecords.forEach(record => {
+      if (record.student && record.student._id) {
+        attendanceMap.set(record.student._id.toString(), record);
+      }
+    });
+    
+    const mergedAttendanceRecords = activeStudents.map(student => {
+      const existingAttendance = attendanceMap.get(student._id.toString());
+      if (existingAttendance) {
+        return {
+          ...existingAttendance,
+          student: {
+            _id: student._id,
+            fullName: student.fullName,
+            admissionNo: student.admissionNo
+          }
+        };
+      } else {
+        return {
+          _id: null,
+          attendanceDate: attendanceDate,
+          student: {
+            _id: student._id,
+            fullName: student.fullName,
+            admissionNo: student.admissionNo
+          },
+          sessions: {},
+          statistics: {
+            totalSessions: 14,
+            presentCount: 14,
+            absentCount: 0,
+            sickCount: 0,
+            leaveCount: 0,
+            attendancePercentage: 100
+          },
+          overallStatus: 'Excellent'
+        };
+      }
+    });
+    
+    // Get sessions
+    let sessions = await AttendanceSession.getInOrder();
+    if (sessions.length === 0) {
+      sessions = await AttendanceSession.initializeDefaults();
+    }
+    
+    const attendanceData = {
+      date: attendanceDate,
+      totalStudents: mergedAttendanceRecords.length,
+      attendanceRecords: mergedAttendanceRecords,
+      sessions: sessions.map(session => ({
+        key: session.sessionKey,
+        name: session.displayNames.english || session.displayNames.sanskrit || session.sessionKey,
+        time: session.defaultTime,
+        category: session.category
+      }))
+    };
+    
+    // Generate PDF
+    const filename = `daily_attendance_${date}_${Date.now()}.pdf`;
+    const outputPath = path.join(__dirname, '../temp', filename);
+    
+    // Ensure temp directory exists
+    const tempDir = path.join(__dirname, '../temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    await generateDailyAttendanceReport(attendanceData, outputPath);
+    
+    // Send PDF
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    const fileStream = fs.createReadStream(outputPath);
+    fileStream.pipe(res);
+    
+    fileStream.on('end', () => {
+      // Clean up temp file
+      setTimeout(() => {
+        if (fs.existsSync(outputPath)) {
+          fs.unlinkSync(outputPath);
+        }
+      }, 5000);
+    });
+    
+  } catch (error) {
+    console.error('Error generating daily attendance PDF:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate PDF',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/attendance/report/daily/:date/excel
+// @desc    Download daily attendance report as Excel (Admin/Principal/Caretaker)
+// @access  Private
+router.get('/report/daily/:date/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARETAKER), async (req, res) => {
+  try {
+    const { date } = req.params;
+    const attendanceDate = new Date(date);
+    attendanceDate.setHours(0, 0, 0, 0);
+    
+    // Get all active students
+    const activeStudents = await Student.find({
+      isActive: true,
+      status: { $ne: 'leftout' }
+    }).select('_id fullName admissionNo').lean();
+    
+    // Get attendance records for the date
+    const attendanceRecords = await DailyAttendance.find({
+      attendanceDate: {
+        $gte: attendanceDate,
+        $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000)
+      },
+      student: { $in: activeStudents.map(s => s._id) }
+    }).populate({
+      path: 'student',
+      select: 'fullName admissionNo',
+      match: { isActive: true, status: { $ne: 'leftout' } }
+    }).lean();
+    
+    // Filter valid records
+    const validAttendanceRecords = attendanceRecords.filter(record => record.student !== null && record.student !== undefined);
+    
+    // Merge with all active students
+    const attendanceMap = new Map();
+    validAttendanceRecords.forEach(record => {
+      if (record.student && record.student._id) {
+        attendanceMap.set(record.student._id.toString(), record);
+      }
+    });
+    
+    const mergedAttendanceRecords = activeStudents.map(student => {
+      const existingAttendance = attendanceMap.get(student._id.toString());
+      if (existingAttendance) {
+        return {
+          ...existingAttendance,
+          student: {
+            _id: student._id,
+            fullName: student.fullName,
+            admissionNo: student.admissionNo
+          }
+        };
+      } else {
+        return {
+          _id: null,
+          attendanceDate: attendanceDate,
+          student: {
+            _id: student._id,
+            fullName: student.fullName,
+            admissionNo: student.admissionNo
+          },
+          sessions: {},
+          statistics: {
+            totalSessions: 14,
+            presentCount: 14,
+            absentCount: 0,
+            sickCount: 0,
+            leaveCount: 0,
+            attendancePercentage: 100
+          },
+          overallStatus: 'Excellent'
+        };
+      }
+    });
+    
+    // Get sessions
+    let sessions = await AttendanceSession.getInOrder();
+    if (sessions.length === 0) {
+      sessions = await AttendanceSession.initializeDefaults();
+    }
+    
+    // Prepare Excel data
+    const excelData = [];
+    
+    // Header row
+    const headerRow = ['S.No', 'Admission No', 'Student Name', ...sessions.map(s => s.displayNames.english || s.sessionKey), 'Present', 'Absent', 'Sick', 'Leave', 'Attendance %', 'Overall Status'];
+    excelData.push(headerRow);
+    
+    // Data rows
+    mergedAttendanceRecords.forEach((record, index) => {
+      const student = record.student || {};
+      const row = [
+        index + 1,
+        student.admissionNo || 'N/A',
+        student.fullName || 'Unknown',
+        ...sessions.map(session => record.sessions?.[session.sessionKey]?.status || 'Present'),
+        record.statistics?.presentCount || 0,
+        record.statistics?.absentCount || 0,
+        record.statistics?.sickCount || 0,
+        record.statistics?.leaveCount || 0,
+        (record.statistics?.attendancePercentage || 0).toFixed(1) + '%',
+        record.overallStatus || 'N/A'
+      ];
+      excelData.push(row);
+    });
+    
+    // Create workbook
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(excelData);
+    
+    // Set column widths
+    const colWidths = [
+      { wch: 8 }, // S.No
+      { wch: 15 }, // Admission No
+      { wch: 25 }, // Student Name
+      ...sessions.map(() => ({ wch: 12 })), // Session columns
+      { wch: 10 }, // Present
+      { wch: 10 }, // Absent
+      { wch: 10 }, // Sick
+      { wch: 10 }, // Leave
+      { wch: 12 }, // Attendance %
+      { wch: 15 } // Overall Status
+    ];
+    ws['!cols'] = colWidths;
+    
+    XLSX.utils.book_append_sheet(wb, ws, 'Daily Attendance');
+    
+    // Generate buffer
+    const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    
+    // Send Excel file
+    const filename = `daily_attendance_${date}_${Date.now()}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(excelBuffer);
+    
+  } catch (error) {
+    console.error('Error generating daily attendance Excel:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate Excel',
       error: error.message
     });
   }

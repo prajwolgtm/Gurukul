@@ -50,6 +50,12 @@ export const parseExcelToStudents = (fileBuffer) => {
     
     // Map Excel columns to student data format
     // Expected Excel columns (case-insensitive matching with exact field names from user):
+    console.log('📊 Total rows to process:', jsonData.length);
+    if (jsonData.length > 0) {
+      console.log('📋 First row keys:', Object.keys(jsonData[0]));
+      console.log('📋 First row values:', JSON.stringify(jsonData[0]).substring(0, 500));
+    }
+    
     const students = jsonData.map((row, index) => {
       // Helper function to normalize strings for comparison
       const normalize = (str) => {
@@ -141,17 +147,20 @@ export const parseExcelToStudents = (fileBuffer) => {
       // Map Excel columns to student fields (matching user's exact field names)
       // Priority: exact match first, then variations
       const studentData = {
-        admissionNo: getValue(['Admission no', 'admission no', 'admissionno', 'admission_no', 'admission number', 'Admission No', 'Adm No', 'Adm No.', 'Admission No.', 'adm no', 'adm no.', 'Admission No', 'Admission Number']),
-        fullName: getValue(['Full Name', 'full name', 'fullname', 'full_name', 'name', 'Name', 'Name of the student', 'name of the student', 'name of student', 'student name', 'Student Name', 'Student name', 'FullName']),
-        dateOfBirth: getValue(['D O B', 'd o b', 'DOB', 'dob', 'dateofbirth', 'date of birth', 'birthdate', 'Date of Birth']),
+        admissionNo: row['Admission no'] || row['admissionNo'] || getValue(['Admission no', 'admission no', 'admissionno', 'admission_no', 'admission number', 'Admission No', 'Adm No', 'Adm No.', 'Admission No.', 'adm no', 'adm no.', 'Admission No', 'Admission Number', 'admissionNo']),
+        fullName: row['Full Name'] || row['fullName'] || getValue(['Full Name', 'full name', 'fullname', 'full_name', 'name', 'Name', 'Name of the student', 'name of the student', 'name of student', 'student name', 'Student Name', 'Student name', 'FullName', 'fullName']),
+        dateOfBirth: getValue(['D O B', 'd o b', 'DOB', 'dob', 'dateofbirth', 'date of birth', 'birthdate', 'Date of Birth', 'DOB', 'Date Of Birth']),
+        gender: getValue(['Gender', 'gender', 'sex', 'Sex', 'blood Group']) || 'Male', // Default to Male if not provided
+        guardianPhone: normalizeTelephoneValue(getValue(['Telephone / Mobile No', 'telephone / mobile no', 'telephone/mobile no', 'telephone', 'mobile', 'phone', 'contact', 'Telephone', 'hone / Mob', 'Phone / Mob', 'Phone', 'Mobile', 'Guardian Phone', 'guardianPhone'])),
         // Age is calculated, not stored
-        bloodGroup: getValue(['Blood Group', 'blood group', 'bloodgroup', 'blood_group', 'blood', 'Blood']),
-        shaakha: getValue(['Shaakha', 'shaakha', 'shakha', 'veda']), // This will be used for department lookup
-        departmentName: getValue(['Shaakha', 'shaakha', 'shakha', 'department', 'dept']), // Shaakha column maps to department name
-        gothra: getValue(['Gothra', 'gothra', 'gotra']),
-        telephone: normalizeTelephoneValue(getValue(['Telephone / Mobile No', 'telephone / mobile no', 'telephone/mobile no', 'telephone', 'mobile', 'phone', 'contact', 'Telephone', 'Telephone / Mobile No'])),
-        fatherName: getValue(['Father Name', 'father name', 'fathername', 'father_name', 'father', 'Father']),
-        motherName: getValue(['Mother Name', 'mother name', 'mothername', 'mother_name', 'mother', 'Mother']),
+        bloodGroup: getValue(['Blood Group', 'blood group', 'bloodgroup', 'blood_group', 'blood', 'Blood', 'blood Group']),
+        shaakha: getValue(['Shaakha', 'shaakha', 'shakha', 'veda', 'Shakha']), // This will be used for department lookup
+        departmentName: getValue(['Shaakha', 'shaakha', 'shakha', 'department', 'dept', 'Department']), // Shaakha column maps to department name
+        gothra: getValue(['Gothra', 'gothra', 'gotra', 'Gotra']),
+        telephone: normalizeTelephoneValue(getValue(['Telephone / Mobile No', 'telephone / mobile no', 'telephone/mobile no', 'telephone', 'mobile', 'phone', 'contact', 'Telephone', 'Telephone / Mobile No', 'hone / Mob', 'Phone / Mob', 'Phone', 'Mobile'])),
+        email: getValue(['Email', 'email', 'e-mail', 'E-mail', 'Email Address', 'email address']),
+        fatherName: getValue(['Father Name', 'father name', 'fathername', 'father_name', 'father', 'Father', 'ather Nam', 'fatherName']),
+        motherName: getValue(['Mother Name', 'mother name', 'mothername', 'mother_name', 'mother', 'Mother', 'other Nam', 'motherName']),
         occupation: getValue(['Occupation', 'occupation', 'Occupatio n']),
         nationality: getValue(['Nationality', 'nationality', 'Nationalit y']) || 'Indian',
         religion: getValue(['Religion', 'religion']) || 'Hindu',

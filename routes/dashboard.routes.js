@@ -33,7 +33,7 @@ router.get('/summary', auth, async (req, res) => {
     // Build base query for exams
     // Exam model has academicYear as direct field (not in academicInfo)
     // Also check if examDate falls within the academic year if academicYear is missing
-    let allExams = await Exam.find({ isDeleted: false });
+    let allExams = await Exam.find({});
     
     // Filter exams by academic year (either from academicYear field or derived from examDate)
     const exams = allExams.filter(exam => {
@@ -59,7 +59,7 @@ router.get('/summary', auth, async (req, res) => {
     };
 
     // Student Statistics (filter by academic year if needed)
-    const studentQuery = { isDeleted: false };
+    const studentQuery = {};
     const totalStudents = await Student.countDocuments(studentQuery);
     
     // Get students by department
@@ -73,8 +73,7 @@ router.get('/summary', auth, async (req, res) => {
 
     // Class Statistics (filtered by academic year)
     const classQuery = {
-      'academicInfo.academicYear': selectedYear,
-      isDeleted: false
+      'academicInfo.academicYear': selectedYear
     };
     
     // Note: SubjectClass uses academicInfo.academicYear, Exam uses academicYear directly
@@ -88,8 +87,7 @@ router.get('/summary', auth, async (req, res) => {
     const attendanceStats = await ClassAttendance.aggregate([
       {
         $match: {
-          'academicInfo.academicYear': selectedYear,
-          isDeleted: false
+          'academicInfo.academicYear': selectedYear
         }
       },
       {
@@ -228,16 +226,15 @@ router.get('/summary', auth, async (req, res) => {
     const totalTeachers = await User.countDocuments(teacherQuery);
 
     // Recent Activity
-    const recentExams = await Exam.find(examQuery)
+    const recentExams = await Exam.find({ _id: { $in: examIds } })
       .populate('subjects.subject', 'name code')
       .sort({ createdAt: -1 })
       .limit(5)
-      .select('name examName subject subjects examType examDate status');
+      .select('name examName subject subjects examType examDate status academicYear');
 
     const recentResults = await ExamResult.find({
       exam: { $in: examIds },
-      'result.isPublished': true,
-      isDeleted: false
+      'result.isPublished': true
     })
       .populate('exam', 'examName subject')
       .populate('student', 'personalInfo.fullName studentId')
@@ -246,7 +243,7 @@ router.get('/summary', auth, async (req, res) => {
 
     // Subject Performance
     const subjectStats = await ExamResult.aggregate([
-      { $match: { exam: { $in: examIds }, 'attendance.status': 'present', isDeleted: false } },
+      { $match: { exam: { $in: examIds }, 'attendance.status': 'present' } },
       { $lookup: { from: 'exams', localField: 'exam', foreignField: '_id', as: 'examInfo' } },
       { $unwind: '$examInfo' },
       {

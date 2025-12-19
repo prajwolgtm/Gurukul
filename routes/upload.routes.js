@@ -280,22 +280,22 @@ router.post('/students/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL), excel
         const normalizedTelephone = normalizeTelephone(studentData.telephone);
 
         // Prepare student data - handle null department and required fields
+        // Match exact format from normal student creation (students.routes.js POST /api/students)
         const studentPayload = {
           admissionNo: studentData.admissionNo,
           fullName: studentData.fullName,
           dateOfBirth: dateOfBirth || new Date(), // Default to today if missing
           bloodGroup: normalizedBloodGroup,
           gender: studentData.gender || 'Male', // Default gender (can be updated later)
-          shaakha: shaakhaValue,
-          gothra: studentData.gothra || '',
           phone: normalizedTelephone,
+          email: studentData.email || '', // Add email field to match normal creation
           address: studentData.presentAddress || '', // Keep for backward compatibility
           presentAddress: studentData.presentAddress || '',
           permanentAddress: studentData.permanentAddress || studentData.presentAddress || '',
           fatherName: studentData.fatherName || 'N/A', // Required field - use default
           motherName: studentData.motherName || 'N/A', // Required field - use default
           occupation: studentData.occupation || '',
-          guardianPhone: normalizedTelephone || '0000000000', // Required field - use default
+          guardianPhone: studentData.guardianPhone || normalizedTelephone || '0000000000', // Required field - use default
           guardianEmail: studentData.guardianEmail || '',
           department: departmentId, // Must be ObjectId or undefined
           subDepartments: subDepartmentId ? [subDepartmentId] : [],
@@ -303,6 +303,8 @@ router.post('/students/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL), excel
           admittedToStandard: studentData.admittedToStandard || '',
           currentStandard: studentData.currentStandard || studentData.admittedToStandard || '',
           dateOfAdmission: dateOfAdmission || new Date(), // Default to today if missing
+          shaakha: shaakhaValue,
+          gothra: studentData.gothra || '',
           lastSchoolAttended: studentData.lastSchoolAttended || '',
           lastStandardStudied: studentData.lastStandardStudied || '',
           tcDetails: studentData.tcDetails || '',
@@ -310,7 +312,10 @@ router.post('/students/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL), excel
           nationality: studentData.nationality || 'Indian',
           religion: studentData.religion || 'Hindu',
           caste: studentData.caste || '',
-          motherTongue: studentData.motherTongue || ''
+          motherTongue: studentData.motherTongue || '',
+          // Explicitly set status and isActive to match normal creation
+          status: 'active',
+          isActive: true
         };
         
         // Only set department if resolved, otherwise skip it (will fail validation but that's expected)
@@ -324,9 +329,9 @@ router.post('/students/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL), excel
           continue;
         }
         
-        // Create student with validation disabled so empty fields are allowed per requirement
+        // Create student - validation enabled to catch missing required fields
         const newStudent = new Student(studentPayload);
-        await newStudent.save({ validateBeforeSave: false });
+        await newStudent.save();
 
         results.successful.push({
           rowNumber: studentData.rowNumber || i + 1,

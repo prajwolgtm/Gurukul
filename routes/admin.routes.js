@@ -129,16 +129,15 @@ router.post('/students/bulk-upload', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL),
         const normalizedBloodGroup = normalizeBloodGroup(studentData.bloodGroup);
         const normalizedTelephone = normalizeTelephone(studentData.telephone || studentData.telephone);
 
-        // Create student record with new structure
+        // Create student record - match exact format from normal student creation (students.routes.js POST /api/students)
         const newStudent = await Student.create({
           admissionNo: studentData.admissionNo,
           fullName: studentData.fullName,
           dateOfBirth: dateOfBirth,
           bloodGroup: normalizedBloodGroup,
           gender: studentData.gender || 'Male', // Default gender
-          shaakha: studentData.shaakha || '',
-          gothra: studentData.gothra || '',
           phone: normalizedTelephone,
+          email: studentData.email || '', // Add email field to match normal creation
           address: studentData.presentAddress || '', // Keep for backward compatibility
           presentAddress: studentData.presentAddress || '',
           permanentAddress: studentData.permanentAddress || studentData.presentAddress || '',
@@ -151,8 +150,10 @@ router.post('/students/bulk-upload', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL),
           subDepartments: studentData.subDepartmentIds || [],
           batches: validatedBatches.map(b => b.batch).filter(Boolean),
           admittedToStandard: studentData.admittedToStandard,
-          dateOfAdmission: dateOfAdmission,
           currentStandard: studentData.currentStandard || studentData.admittedToStandard,
+          dateOfAdmission: dateOfAdmission,
+          shaakha: studentData.shaakha || '',
+          gothra: studentData.gothra || '',
           lastSchoolAttended: studentData.lastSchoolAttended || '',
           lastStandardStudied: studentData.lastStandardStudied || '',
           tcDetails: studentData.tcDetails || '',
@@ -160,7 +161,10 @@ router.post('/students/bulk-upload', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL),
           nationality: studentData.nationality || 'Indian',
           religion: studentData.religion || 'Hindu',
           caste: studentData.caste || '',
-          motherTongue: studentData.motherTongue || ''
+          motherTongue: studentData.motherTongue || '',
+          // Explicitly set status and isActive to match normal creation
+          status: 'active',
+          isActive: true
         });
 
         results.successful.push({

@@ -307,12 +307,34 @@ router.get('/transactions', auth, permit(ROLES.PARENT), async (req, res) => {
       });
     }
 
-    // TODO: Implement transaction/fees system
-    // For now, return empty array
+    // Get wallet transactions from student
+    const walletTransactions = student.walletTransactions || [];
+    const wallet = student.wallet || {};
+    
+    // Format transactions for parent view
+    const formattedTransactions = walletTransactions
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .map(tx => ({
+        id: tx._id,
+        date: tx.date,
+        type: tx.type,
+        amount: tx.amount,
+        source: tx.source,
+        creditRemark: tx.creditRemark,
+        debitRemark: tx.debitRemark,
+        reference: tx.reference,
+        balanceAfter: tx.balanceAfter
+      }));
+
     res.json({
       success: true,
-      data: [],
-      message: 'Transaction system not yet implemented'
+      data: formattedTransactions,
+      wallet: {
+        currentBalance: wallet.currentBalance ?? 0,
+        totalCredit: wallet.totalCredit ?? 0,
+        totalDebit: wallet.totalDebit ?? 0,
+        currency: wallet.currency || 'INR'
+      }
     });
   } catch (error) {
     console.error('Error fetching transactions:', error);
@@ -333,10 +355,12 @@ router.get('/notes', auth, permit(ROLES.PARENT), async (req, res) => {
 
     // STRICT: Find student ONLY by linkedStudent or guardianEmail (NOT student's own email)
     const parentEmail = req.user.email.toLowerCase().trim();
-    let student = await Student.findOne({ linkedStudent: parentId });
+    let student = await Student.findOne({ linkedStudent: parentId })
+      .populate('notes.createdBy', 'fullName email');
     
     if (!student) {
-      student = await Student.findOne({ guardianEmail: parentEmail });
+      student = await Student.findOne({ guardianEmail: parentEmail })
+        .populate('notes.createdBy', 'fullName email');
       if (student) {
         // SECURITY: Verify this is NOT a student's own email
         if (student.email && student.email.toLowerCase().trim() === parentEmail) {
@@ -367,18 +391,45 @@ router.get('/notes', auth, permit(ROLES.PARENT), async (req, res) => {
       });
     }
 
-    // TODO: Implement notes system
-    // For now, return student remarks if available
+    // Get notes from student.notes array
+    // Parents can see notes with visibility 'all' (notes visible to everyone including parents)
+    const allNotes = student.notes || [];
+    const parentVisibleNotes = allNotes.filter(note => {
+      const visibility = note.visibility || 'staff';
+      return visibility === 'all'; // Only show notes marked as visible to all
+    });
+
+    // Sort by creation date (newest first) and format
+    const formattedNotes = parentVisibleNotes
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .map(note => ({
+        id: note._id,
+        title: note.title || 'Note',
+        content: note.content,
+        category: note.category || 'general',
+        visibility: note.visibility || 'staff',
+        createdAt: note.createdAt,
+        createdBy: note.createdByName || note.createdBy?.fullName || note.createdBy?.email || 'System',
+        updatedAt: note.updatedAt
+      }));
+
+    // Also include student remarks if available
+    if (student.remarks && student.remarks.trim()) {
+      formattedNotes.push({
+        id: 'remarks',
+        title: 'Student Remarks',
+        content: student.remarks,
+        category: 'general',
+        visibility: 'all',
+        createdAt: student.updatedAt || student.createdAt,
+        createdBy: 'System',
+        updatedAt: student.updatedAt || student.createdAt
+      });
+    }
+
     res.json({
       success: true,
-      data: student.remarks ? [{
-        id: 'remarks',
-        type: 'general',
-        content: student.remarks,
-        createdAt: student.updatedAt || student.createdAt,
-        createdBy: 'System'
-      }] : [],
-      message: 'Notes system not yet fully implemented'
+      data: formattedNotes
     });
   } catch (error) {
     console.error('Error fetching notes:', error);

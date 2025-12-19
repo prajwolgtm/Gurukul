@@ -223,7 +223,20 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    // Create student
+    // Create student - include all fields from Student schema to match bulk upload format
+    const {
+      presentAddress,
+      permanentAddress,
+      occupation,
+      nationality,
+      religion,
+      caste,
+      motherTongue,
+      lastSchoolAttended,
+      lastStandardStudied,
+      tcDetails
+    } = req.body;
+
     const student = new Student({
       admissionNo,
       fullName,
@@ -233,8 +246,11 @@ router.post('/', auth, async (req, res) => {
       phone,
       email,
       address,
+      presentAddress: presentAddress || address || '',
+      permanentAddress: permanentAddress || presentAddress || address || '',
       fatherName,
       motherName,
+      occupation: occupation || '',
       guardianPhone,
       guardianEmail: guardianEmail || '',
       department,
@@ -245,7 +261,14 @@ router.post('/', auth, async (req, res) => {
       dateOfAdmission: dateOfAdmission || new Date(),
       shaakha,
       gothra,
+      lastSchoolAttended: lastSchoolAttended || '',
+      lastStandardStudied: lastStandardStudied || '',
+      tcDetails: tcDetails || '',
       remarks,
+      nationality: nationality || 'Indian',
+      religion: religion || 'Hindu',
+      caste: caste || '',
+      motherTongue: motherTongue || '',
       status: 'active',
       isActive: true
     });
@@ -453,6 +476,53 @@ router.post('/bulk-upload', auth, async (req, res) => {
     }
 
     const { students } = req.body;
+    
+    // Preload departments for shaakha resolution
+    const allDepartments = await Department.find({ isActive: true }).lean();
+    const allSubDepartments = await SubDepartment.find({ isActive: true }).lean();
+    
+    // Helper to resolve department from shaakha
+    const resolveDepartmentFromShaakha = (shaakha) => {
+      if (!shaakha) return { department: null, subDepartment: null };
+      const s = shaakha.toString().toLowerCase();
+      
+      let deptName = null;
+      let subDeptName = null;
+      
+      if (s.includes('krishna') || s.includes('taittiriya')) {
+        deptName = 'yajurveda';
+        subDeptName = 'krishna';
+      } else if (s.includes('shukla') && s.includes('kanva')) {
+        deptName = 'yajurveda';
+        subDeptName = 'kanva';
+      } else if (s.includes('shukla') && (s.includes('madhyandina') || s.includes('madhyan'))) {
+        deptName = 'yajurveda';
+        subDeptName = 'madhyandina';
+      } else if (s.includes('shukla')) {
+        deptName = 'yajurveda';
+        subDeptName = 'madhyandina'; // default
+      } else if (s.includes('rig') || s.includes('shaakal') || s.includes('shakal')) {
+        deptName = 'rigveda';
+        subDeptName = 'shaakal';
+      } else if (s.includes('sama') && (s.includes('ranayaneeya') || s.includes('ranayani'))) {
+        deptName = 'samaveda';
+        subDeptName = 'ranayaneeya';
+      } else if (s.includes('sama') && (s.includes('kauthuma') || s.includes('kauthum'))) {
+        deptName = 'samaveda';
+        subDeptName = 'kauthuma';
+      } else if (s.includes('sama')) {
+        deptName = 'samaveda';
+        subDeptName = 'kauthuma'; // default
+      } else if (s.includes('atharva') || s.includes('shaunaka') || s.includes('shaunak')) {
+        deptName = 'atharvaveda';
+        subDeptName = 'shaunaka';
+      }
+      
+      const department = deptName ? allDepartments.find(d => d.name.toLowerCase().includes(deptName)) : null;
+      const subDepartment = subDeptName ? allSubDepartments.find(sd => sd.name.toLowerCase().includes(subDeptName)) : null;
+      
+      return { department: department?._id || null, subDepartment: subDepartment?._id || null };
+    };
 
     if (!students || !Array.isArray(students) || students.length === 0) {
       return res.status(400).json({
@@ -463,12 +533,33 @@ router.post('/bulk-upload', auth, async (req, res) => {
 
     const parseDate = (value) => {
       if (!value) return null;
-      // Accept dd/mm/yyyy or yyyy-mm-dd
-      if (value.includes('/')) {
-        const [dd, mm, yyyy] = value.split('/').map((v) => v.trim());
-        if (dd && mm && yyyy) return new Date(`${yyyy}-${mm}-${dd}`);
+      // Convert to string first to handle numbers
+      const strValue = value.toString().trim();
+      if (!strValue) return null;
+      
+      // Accept dd/mm/yyyy format
+      if (strValue.includes('/')) {
+        const parts = strValue.split('/').map((v) => v.trim());
+        if (parts.length === 3) {
+          const [dd, mm, yyyy] = parts;
+          // Handle 2-digit year
+          const fullYear = yyyy.length === 2 ? (parseInt(yyyy) > 50 ? `19${yyyy}` : `20${yyyy}`) : yyyy;
+          const date = new Date(parseInt(fullYear), parseInt(mm) - 1, parseInt(dd));
+          if (!isNaN(date.getTime())) return date;
+        }
       }
-      return new Date(value);
+      
+      // Accept yyyy-mm-dd format
+      if (strValue.includes('-')) {
+        const date = new Date(strValue);
+        if (!isNaN(date.getTime())) return date;
+      }
+      
+      // Try standard parsing
+      const date = new Date(strValue);
+      if (!isNaN(date.getTime())) return date;
+      
+      return null; // Return null instead of Invalid Date
     };
 
     const clean = (obj) => {
@@ -487,17 +578,47 @@ router.post('/bulk-upload', auth, async (req, res) => {
       total: students.length
     };
 
+    // Debug: log first row to see actual keys
+    if (students.length > 0) {
+      console.log('📋 Bulk upload - First row keys:', Object.keys(students[0]));
+      console.log('📋 Bulk upload - First row data:', JSON.stringify(students[0]).substring(0, 500));
+    }
+
     for (let i = 0; i < students.length; i++) {
       const row = students[i] || {};
       try {
-        const admissionNo = row.admissionNo || row['Admission Number'] || row['Admission No'] || row['admission_no'];
-        const fullName = row.fullName || row['Full Name'] || row['Name'];
-        const department = row.department || row['Department'] || row['departmentId'];
+        // Try all possible key variations
+        const admissionNo = row.admissionNo || row['Admission no'] || row['Admission Number'] || row['Admission No'] || row['admission_no'] || row['admission no'];
+        const fullName = row.fullName || row['Full Name'] || row['Name'] || row['full name'] || row['Full name'];
+        const shaakha = row.shaakha || row['Shaakha'] || '';
+        
+        // Resolve department from shaakha if not provided
+        let department = row.department || row['Department'] || row['departmentId'];
+        let subDepartmentId = null;
+        
+        if (!department && shaakha) {
+          const resolved = resolveDepartmentFromShaakha(shaakha);
+          department = resolved.department;
+          subDepartmentId = resolved.subDepartment;
+        }
+
+        // Debug first few rows
+        if (i < 3) {
+          console.log(`📋 Row ${i + 1}: admissionNo="${admissionNo}", fullName="${fullName}", shaakha="${shaakha}", dept="${department}"`);
+        }
 
         if (!admissionNo || !fullName) {
           results.errors.push({
             row: i + 1,
             error: 'Missing required fields (admissionNo, fullName)'
+          });
+          continue;
+        }
+        
+        if (!department) {
+          results.errors.push({
+            row: i + 1,
+            error: `Could not resolve department from shaakha: ${shaakha || 'empty'}`
           });
           continue;
         }
@@ -515,33 +636,41 @@ router.post('/bulk-upload', auth, async (req, res) => {
         // Get parent email - map to guardianEmail field
         const parentEmail = row.parentEmail || row['Parent Email'] || row['parentEmail'] || row.guardianEmail || row['Guardian Email'];
         
+        // Convert phone to string (fix "value.includes is not a function" error)
+        const phoneValue = (row.phone || row['Phone'] || row['Telephone / Mobile No'] || '').toString();
+        const guardianPhoneValue = (row.guardianPhone || row['Guardian Phone'] || row['Telephone / Mobile No'] || '0000000000').toString();
+        
+        // Parse dateOfBirth - default to today if invalid/missing
+        const dobValue = row.dateOfBirth || row.dob || row['Date of Birth'] || row['D O B'] || row['DOB'];
+        const parsedDob = parseDate(dobValue);
+        const dateOfBirth = parsedDob || new Date(); // Default to today if parsing fails
+        
         // Build student document with safe parsing and filtering empty values
         const studentDoc = clean({
           admissionNo,
           fullName,
-          dateOfBirth: parseDate(row.dateOfBirth || row.dob || row['Date of Birth'] || row['D O B']),
-          gender: row.gender || row['Gender'],
+          dateOfBirth,
+          gender: row.gender || row['Gender'] || 'Male',
           bloodGroup: row.bloodGroup || row['Blood Group'],
-          phone: row.phone || row['Phone'],
+          phone: phoneValue,
           email: row.email || row['Email'],
-          address: row.address || row['Address'],
-          fatherName: row.fatherName || row['Father\'s Name'] || row['Father Name'],
-          motherName: row.motherName || row['Mother\'s Name'] || row['Mother Name'],
-          guardianPhone: row.guardianPhone || row['Guardian Phone'] || row['Telephone / Mobile No'],
-          guardianEmail: parentEmail ? parentEmail.toLowerCase().trim() : undefined, // Map parentEmail to guardianEmail
-          shaakha: row.shaakha || row['Shaakha'],
+          address: row.address || row['Address'] || row['Present Address'],
+          fatherName: row.fatherName || row['Father\'s Name'] || row['Father Name'] || 'N/A',
+          motherName: row.motherName || row['Mother\'s Name'] || row['Mother Name'] || 'N/A',
+          guardianPhone: guardianPhoneValue,
+          guardianEmail: parentEmail ? parentEmail.toString().toLowerCase().trim() : undefined,
+          shaakha: shaakha,
           gothra: row.gothra || row['Gothra'],
           department,
-          subDepartments: Array.isArray(row.subDepartments) ? row.subDepartments : 
-                         (row['Sub-Departments'] ? (Array.isArray(row['Sub-Departments']) ? row['Sub-Departments'] : [row['Sub-Departments']]) : []),
+          subDepartments: subDepartmentId ? [subDepartmentId] : (Array.isArray(row.subDepartments) ? row.subDepartments : []),
           batches: Array.isArray(row.batches) ? row.batches : 
                   (row['Batches'] ? (Array.isArray(row['Batches']) ? row['Batches'] : [row['Batches']]) : []),
-          admittedStandard: row.admittedStandard || row['Admitted to Standard'],
+          admittedToStandard: row.admittedToStandard || row.admittedStandard || row['Admitted to Standard'],
           currentStandard: row.currentStandard || row['Current Standard'],
           dateOfAdmission: parseDate(row.dateOfAdmission || row['Date of Admission']),
           status: row.status || row['Status'] || 'active',
           remarks: row.remarks || row['Remarks'],
-          isActive: row.isActive !== false
+          isActive: true
         });
 
         const student = new Student(studentDoc);

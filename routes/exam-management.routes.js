@@ -99,7 +99,7 @@ router.post('/subjects', auth, async (req, res) => {
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
-    const {
+    let {
       page = 1,
       limit = 20,
       department,
@@ -108,8 +108,15 @@ router.get('/', auth, async (req, res) => {
       status,
       examType,
       createdBy,
-      search
+      search,
+      academicYear,
+      showAllYears = 'false'
     } = req.query;
+
+    // Normalize academicYear from query: treat "null"/"undefined"/empty as not provided
+    if (academicYear === 'null' || academicYear === 'undefined' || academicYear === '') {
+      academicYear = undefined;
+    }
 
     // Build query
     let query = {};
@@ -129,25 +136,105 @@ router.get('/', auth, async (req, res) => {
       ];
     }
 
-    const exams = await Exam.find(query)
+    // Fetch all exams that match non-year filters
+    console.log('📋 Exam query:', JSON.stringify(query));
+    const examsRaw = await Exam.find(query)
       .populate('targetDepartment', 'name code')
+      .populate('targetDepartments', 'name code')
       .populate('targetSubDepartments', 'name code')
       .populate('targetBatches', 'name code academicYear')
       .populate('subjects.subject', 'name code')
+      .populate('customStudents', 'admissionNo fullName')
       .populate('createdBy', 'fullName email')
-      .sort({ examDate: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .sort({ examDate: -1 });
+    console.log('📋 Raw exams found:', examsRaw.length);
 
-    const total = await Exam.countDocuments(query);
+    // Apply academic year filtering
+    const { getCurrentAcademicYear, getAcademicYearFromDate } = await import('../utils/academicYear.js');
+    
+    // Helper to normalize academic year format (handles both 2024-25 and 2024-2025)
+    const normalizeYear = (year) => {
+      if (!year) return null;
+      const parts = year.split('-');
+      if (parts.length !== 2) return year;
+      const start = parts[0];
+      let end = parts[1];
+      if (end.length === 2) {
+        end = start.substring(0, 2) + end;
+      }
+      return `${start}-${end}`;
+    };
+
+    let exams = examsRaw;
+    if (showAllYears !== 'true') {
+      const selectedYear = academicYear && academicYear !== 'all' 
+        ? academicYear 
+        : getCurrentAcademicYear();
+      const normalizedSelectedYear = normalizeYear(selectedYear);
+      
+      exams = examsRaw.filter(exam => {
+        const examYear = exam.academicYear || (exam.examDate ? getAcademicYearFromDate(exam.examDate) : null);
+        return normalizeYear(examYear) === normalizedSelectedYear;
+      });
+      console.log('📋 After academic year filter:', exams.length, '(year:', selectedYear, ')');
+    }
+
+    // Manual pagination after filtering
+    const total = exams.length;
+    const start = (page - 1) * limit;
+    const pagedExams = exams.slice(start, start + parseInt(limit));
+    
+    // Calculate eligible students count for each exam
+    const examsWithCounts = await Promise.all(pagedExams.map(async (exam) => {
+      let count = 0;
+      try {
+        if (exam.selectionType === 'custom') {
+          count = exam.customStudents?.length || 0;
+        } else {
+          let studentQuery = { 
+            isActive: true, 
+            status: { $ne: 'leftout' }
+          };
+          
+          if (exam.selectionType === 'department') {
+            if (exam.targetDepartments && exam.targetDepartments.length > 0) {
+              if (exam.targetDepartments.includes('__all__')) {
+                // All departments - count all active students
+                count = await Student.countDocuments(studentQuery);
+              } else {
+                studentQuery.department = { $in: exam.targetDepartments.map(d => d._id || d) };
+                count = await Student.countDocuments(studentQuery);
+              }
+            } else if (exam.targetDepartment) {
+              studentQuery.department = exam.targetDepartment._id || exam.targetDepartment;
+              count = await Student.countDocuments(studentQuery);
+            }
+          } else if (exam.selectionType === 'subDepartment' && exam.targetSubDepartments.length > 0) {
+            studentQuery.subDepartments = { $in: exam.targetSubDepartments.map(sd => sd._id || sd) };
+            count = await Student.countDocuments(studentQuery);
+          } else if (exam.selectionType === 'batch' && exam.targetBatches.length > 0) {
+            studentQuery.batches = { $in: exam.targetBatches.map(b => b._id || b) };
+            count = await Student.countDocuments(studentQuery);
+          }
+        }
+      } catch (error) {
+        console.error(`Error counting students for exam ${exam._id}:`, error);
+        count = 0;
+      }
+      
+      return {
+        ...exam.toObject(),
+        eligibleStudentsCount: count
+      };
+    }));
 
     res.json({
       success: true,
-      count: exams.length,
+      count: examsWithCounts.length,
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit),
-      exams
+      exams: examsWithCounts
     });
   } catch (error) {
     console.error('Error fetching exams:', error);
@@ -259,7 +346,18 @@ router.post('/', auth, async (req, res) => {
     } = req.body;
     
     // Support both single department and multiple departments
-    const departmentsList = targetDepartments || departments || (department ? [department] : []);
+    // If "__all__" is present, we treat it as "all departments" but DO NOT store it in Mongo
+    let departmentsListRaw = targetDepartments || departments || (department ? [department] : []);
+    let hasAllDepartmentsSentinel = false;
+    if (Array.isArray(departmentsListRaw)) {
+      if (departmentsListRaw.includes('__all__')) {
+        hasAllDepartmentsSentinel = true;
+      }
+    }
+    // Remove "__all__" from the stored list (we'll infer "all" when arrays are empty)
+    let departmentsList = Array.isArray(departmentsListRaw)
+      ? departmentsListRaw.filter(d => d && d !== '__all__')
+      : [];
 
     // Use name if provided, otherwise use title (for backward compatibility)
     const examName = name || title;
@@ -275,14 +373,14 @@ router.post('/', auth, async (req, res) => {
 
     // Validate exam scope requirements
     if (examScopeValue === 'department') {
-      // Check if "All Departments" is selected (__all__) or at least one department
-      const hasAllDepartments = departmentsList.includes('__all__');
-      const hasDepartments = departmentsList.length > 0 && !hasAllDepartments;
-      
-      if (!hasAllDepartments && !hasDepartments) {
+      const hasDepartments = departmentsList.length > 0;
+      // Valid if:
+      // - At least one specific department is selected, OR
+      // - The "__all__" sentinel was present (meaning "all departments")
+      if (!hasDepartments && !hasAllDepartmentsSentinel) {
         return res.status(400).json({
           success: false,
-          message: 'At least one department or "All Departments" is required for department scope'
+          message: 'At least one department or \"All Departments\" is required for department scope'
         });
       }
     }
@@ -373,10 +471,11 @@ router.post('/', auth, async (req, res) => {
       description,
       selectionType: examScopeValue,
       // Support both single and multiple departments
-      targetDepartment: examScopeValue === 'department' && departmentsList.length === 1 && !departmentsList.includes('__all__') 
-        ? departmentsList[0] 
+      // If no departments are stored (and sentinel was used), it means "all departments"
+      targetDepartment: examScopeValue === 'department' && departmentsList.length === 1
+        ? departmentsList[0]
         : undefined,
-      targetDepartments: examScopeValue === 'department' && (departmentsList.length > 1 || departmentsList.includes('__all__'))
+      targetDepartments: examScopeValue === 'department' && departmentsList.length > 1
         ? departmentsList
         : undefined,
       targetSubDepartments: subDepartments,
@@ -397,8 +496,12 @@ router.post('/', auth, async (req, res) => {
     };
 
     const exam = new Exam(examData);
+    
+    console.log('📅 Exam academicYear:', examData.academicYear);
+    console.log('📅 Exam examDate:', examDate);
 
     await exam.save();
+    console.log('✅ Exam saved with ID:', exam._id, 'academicYear:', exam.academicYear);
     await exam.populate([
       { path: 'targetDepartment', select: 'name code' },
       { path: 'targetDepartments', select: 'name code' },

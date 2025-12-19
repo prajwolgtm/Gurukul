@@ -484,3 +484,146 @@ export const generateCompleteExamReport = async (exam, results, outputPath) => {
     }
   });
 };
+
+/**
+ * Generate Daily Attendance Report PDF
+ * Shows all students' attendance for a specific date with all sessions
+ */
+export const generateDailyAttendanceReport = async (attendanceData, outputPath) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 50, size: 'A4', layout: 'landscape' });
+      const stream = fs.createWriteStream(outputPath);
+      doc.pipe(stream);
+
+      // Header
+      doc.fontSize(20).font('Helvetica-Bold')
+        .text('VEDA AGAMA SAMSKRUTHA MAHA PATASHALA', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(16).font('Helvetica')
+        .text('VED VIGNAN MAHA VIDYA PEETH', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(12).font('Helvetica')
+        .text('Sri Sri Gurukul, 21st K.M. Kanakpura Road, Udayapura, Bengaluru - 560082', { align: 'center' });
+      doc.moveDown(1);
+
+      // Report Title
+      doc.fontSize(14).font('Helvetica-Bold')
+        .text('DAILY ATTENDANCE REPORT', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(11).font('Helvetica');
+      const dateInfoY = doc.y;
+      const reportDate = new Date(attendanceData.date);
+      doc.text(`Date: ${reportDate.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, 50, dateInfoY);
+      doc.text(`Total Students: ${attendanceData.totalStudents || 0}`, 400, dateInfoY);
+      doc.moveDown(1);
+
+      const sessions = attendanceData.sessions || [];
+      const records = attendanceData.attendanceRecords || [];
+
+      // Table Header
+      const tableTop = doc.y;
+      const rowHeight = 20;
+      const colWidths = [30, 80, 120, ...sessions.map(() => 40), 50, 50, 50, 50, 50, 60];
+      const headers = ['S.No', 'Adm No', 'Student Name', ...sessions.map(s => s.name.substring(0, 8)), 'P', 'A', 'S', 'L', '%', 'Status'];
+
+      doc.fontSize(7).font('Helvetica-Bold');
+      let x = 50;
+      headers.forEach((header, i) => {
+        doc.text(header, x, tableTop, { width: colWidths[i], align: i === 0 ? 'center' : 'left' });
+        x += colWidths[i];
+      });
+
+      // Draw header line
+      doc.moveTo(50, tableTop + 15)
+        .lineTo(750, tableTop + 15)
+        .stroke();
+
+      // Table Rows
+      doc.fontSize(6).font('Helvetica');
+      let y = tableTop + 20;
+      
+      records.forEach((record, index) => {
+        if (y > 500) {
+          doc.addPage();
+          y = 50;
+          // Redraw header on new page
+          let headerX = 50;
+          headers.forEach((header, i) => {
+            doc.fontSize(7).font('Helvetica-Bold');
+            doc.text(header, headerX, y - 20, { width: colWidths[i], align: i === 0 ? 'center' : 'left' });
+            headerX += colWidths[i];
+          });
+          doc.moveTo(50, y - 5)
+            .lineTo(750, y - 5)
+            .stroke();
+          doc.fontSize(6).font('Helvetica');
+        }
+
+        const student = record.student || {};
+        x = 50;
+        
+        // S.No
+        doc.text(String(index + 1), x, y, { width: colWidths[0], align: 'center' });
+        x += colWidths[0];
+        
+        // Admission No
+        doc.text(student.admissionNo || 'N/A', x, y, { width: colWidths[1], align: 'left' });
+        x += colWidths[1];
+        
+        // Student Name
+        doc.text((student.fullName || 'Unknown').substring(0, 15), x, y, { width: colWidths[2], align: 'left' });
+        x += colWidths[2];
+        
+        // Session statuses
+        sessions.forEach((session) => {
+          const status = record.sessions?.[session.key]?.status || 'Present';
+          const statusColor = status === 'Present' ? '#28a745' : status === 'Absent' ? '#dc3545' : status === 'Sick' ? '#ffc107' : '#17a2b8';
+          doc.fillColor(statusColor);
+          doc.text(status.substring(0, 1), x, y, { width: colWidths[3], align: 'center' });
+          doc.fillColor('black');
+          x += colWidths[3];
+        });
+        
+        // Statistics
+        const stats = record.statistics || {};
+        doc.text(String(stats.presentCount || 0), x, y, { width: colWidths[3 + sessions.length], align: 'center' });
+        x += colWidths[3 + sessions.length];
+        doc.text(String(stats.absentCount || 0), x, y, { width: colWidths[4 + sessions.length], align: 'center' });
+        x += colWidths[4 + sessions.length];
+        doc.text(String(stats.sickCount || 0), x, y, { width: colWidths[5 + sessions.length], align: 'center' });
+        x += colWidths[5 + sessions.length];
+        doc.text(String(stats.leaveCount || 0), x, y, { width: colWidths[6 + sessions.length], align: 'center' });
+        x += colWidths[6 + sessions.length];
+        doc.text(`${(stats.attendancePercentage || 0).toFixed(1)}%`, x, y, { width: colWidths[7 + sessions.length], align: 'center' });
+        x += colWidths[7 + sessions.length];
+        doc.text(record.overallStatus || 'N/A', x, y, { width: colWidths[8 + sessions.length], align: 'center' });
+        
+        y += rowHeight;
+      });
+
+      // Summary at the end
+      doc.moveDown(1);
+      const summaryY = doc.y;
+      doc.fontSize(10).font('Helvetica-Bold').text('Summary:', 50, summaryY);
+      doc.moveDown(0.5);
+      doc.fontSize(9).font('Helvetica');
+      const avgAttendance = records.length > 0
+        ? records.reduce((sum, r) => sum + (r.statistics?.attendancePercentage || 0), 0) / records.length
+        : 0;
+      doc.text(`Average Attendance: ${avgAttendance.toFixed(1)}%`, 50, doc.y);
+      doc.text(`Total Students: ${records.length}`, 50, doc.y + 15);
+      
+      const presentCount = records.reduce((sum, r) => sum + (r.statistics?.presentCount || 0), 0);
+      const absentCount = records.reduce((sum, r) => sum + (r.statistics?.absentCount || 0), 0);
+      doc.text(`Total Present Sessions: ${presentCount}`, 50, doc.y + 30);
+      doc.text(`Total Absent Sessions: ${absentCount}`, 50, doc.y + 45);
+
+      doc.end();
+      stream.on('finish', () => resolve(outputPath));
+      stream.on('error', reject);
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
