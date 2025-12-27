@@ -21,6 +21,7 @@ const router = express.Router();
 // @access  Private
 router.get('/summary', auth, async (req, res) => {
   try {
+    console.log('📊 Dashboard summary route called');
     const { academicYear } = req.query;
     const userRole = req.user.role;
     const userId = req.user.id;
@@ -29,6 +30,8 @@ router.get('/summary', auth, async (req, res) => {
     const selectedYear = academicYear && academicYear !== 'all' 
       ? academicYear 
       : getCurrentAcademicYear();
+    
+    console.log('📊 Selected academic year:', selectedYear);
 
     // Build base query for exams
     // Exam model has academicYear as direct field (not in academicInfo)
@@ -58,9 +61,67 @@ router.get('/summary', auth, async (req, res) => {
       draft: exams.filter(e => e.status === 'draft').length
     };
 
-    // Student Statistics (filter by academic year if needed)
-    const studentQuery = {};
-    const totalStudents = await Student.countDocuments(studentQuery);
+    // Student Statistics - Get active and graduated separately
+    // Match the exact same query pattern used in /api/students route
+    // The students route uses: { isActive: true, status: 'active' } when status='active' is passed
+    
+    // Use the EXACT same query as /api/students?status=active
+    // Base query: { isActive: true }
+    // Then adds: { status: 'active' }
+    const activeStudentsQuery = { 
+      isActive: true,
+      status: 'active'
+    };
+    let activeStudents = await Student.countDocuments(activeStudentsQuery);
+    
+    // Count graduated students
+    const graduatedStudents = await Student.countDocuments({ 
+      status: 'graduated' 
+    });
+    
+    // Debug logging to understand the data
+    const totalAllStudents = await Student.countDocuments({});
+    const totalIsActive = await Student.countDocuments({ isActive: true });
+    const totalStatusActive = await Student.countDocuments({ status: 'active' });
+    const totalIsActiveAndStatusActive = await Student.countDocuments({ 
+      isActive: true, 
+      status: 'active' 
+    });
+    
+    console.log('📊 Dashboard Student Stats Debug:', {
+      'activeStudents (isActive: true, status: "active")': activeStudents,
+      'graduatedStudents (status: "graduated")': graduatedStudents,
+      'totalAllStudents (no filter)': totalAllStudents,
+      'totalIsActive (isActive: true only)': totalIsActive,
+      'totalStatusActive (status: "active" only)': totalStatusActive,
+      'totalIsActiveAndStatusActive (both)': totalIsActiveAndStatusActive
+    });
+    
+    // Fallback: If exact query returns 0, but we have students with status: 'active',
+    // use that count (matching what students page might show)
+    if (activeStudents === 0) {
+      if (totalStatusActive > 0) {
+        console.log('⚠️ Using status: "active" count as fallback:', totalStatusActive);
+        activeStudents = totalStatusActive;
+      } else if (totalIsActive > 0) {
+        console.log('⚠️ Using isActive: true count as fallback:', totalIsActive);
+        activeStudents = totalIsActive;
+      }
+    }
+    
+    const totalStudents = activeStudents + graduatedStudents;
+    
+    console.log('📊 Final student counts:', {
+      active: activeStudents,
+      graduated: graduatedStudents,
+      total: totalStudents
+    });
+    
+    // Base query for other student queries (exclude leftout by default)
+    const studentQuery = { 
+      isActive: true,
+      status: { $ne: 'leftout' }
+    };
     
     // Get students by department
     const studentsByDept = await Student.aggregate([
@@ -263,12 +324,21 @@ router.get('/summary', auth, async (req, res) => {
       { $limit: 5 }
     ]);
 
+    // Log the student statistics before creating dashboard object
+    console.log('📊 Creating dashboard with student stats:', {
+      activeStudents,
+      graduatedStudents,
+      totalStudents
+    });
+
     const dashboard = {
       academicYear: selectedYear,
       statistics: {
         exams: examStats,
         students: {
           total: totalStudents,
+          active: activeStudents,
+          graduated: graduatedStudents,
           byDepartment: studentsByDept
         },
         classes: {
@@ -312,6 +382,8 @@ router.get('/summary', auth, async (req, res) => {
       }))
     };
 
+    console.log('📊 Sending dashboard response. Student stats:', dashboard.statistics.students);
+    
     res.json({
       success: true,
       message: 'Dashboard data loaded successfully',

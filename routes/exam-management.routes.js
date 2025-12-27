@@ -8,6 +8,7 @@ import Department from '../models/Department.js';
 import SubDepartment from '../models/SubDepartment.js';
 import Batch from '../models/Batch.js';
 import { auth } from '../middleware/auth.js';
+import { permit } from '../middleware/rbac.js';
 import { ROLES } from '../utils/roles.js';
 import { getCurrentAcademicYear, getAcademicYearFromDate } from '../utils/academicYear.js';
 
@@ -16,11 +17,16 @@ const router = express.Router();
 // ==================== SUBJECTS ====================
 
 // @route   GET /api/exams/subjects
-// @desc    Get all subjects
+// @desc    Get all subjects (active and inactive)
 // @access  Private
 router.get('/subjects', auth, async (req, res) => {
   try {
-    const subjects = await Subject.find({ isActive: true }).sort({ name: 1 });
+    const { includeInactive } = req.query;
+    
+    // By default, only return active subjects for dropdowns
+    // But if includeInactive is true, return all subjects (for management view)
+    const query = includeInactive === 'true' ? {} : { isActive: true };
+    const subjects = await Subject.find(query).sort({ name: 1 });
 
     res.json({
       success: true,
@@ -88,6 +94,52 @@ router.post('/subjects', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error creating subject',
+      error: error.message
+    });
+  }
+});
+
+// @route   DELETE /api/exams/subjects/:id
+// @desc    Delete a subject (soft delete)
+// @access  Private (Admin, Coordinator only)
+router.delete('/subjects/:id', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+  try {
+    const subject = await Subject.findById(req.params.id);
+    
+    if (!subject) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subject not found'
+      });
+    }
+
+    // Check if subject is used in any exams
+    const Exam = (await import('../models/Exam.js')).default;
+    const examsUsingSubject = await Exam.find({
+      'subjects.subject': subject._id,
+      isDeleted: false
+    });
+
+    if (examsUsingSubject.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete subject. It is used in ${examsUsingSubject.length} exam(s). Please remove it from exams first.`
+      });
+    }
+
+    // Soft delete
+    subject.isActive = false;
+    await subject.save();
+
+    res.json({
+      success: true,
+      message: 'Subject deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting subject:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting subject',
       error: error.message
     });
   }
