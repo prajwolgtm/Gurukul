@@ -863,8 +863,12 @@ router.get('/dashboard', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, R
 
     const examIds = exams.map(e => e._id);
 
-    // Get upcoming exams
-    const upcomingExams = await Exam.findUpcomingExams(30);
+    // Get upcoming exams with populated subjects
+    const upcomingExamsQuery = Exam.findUpcomingExams(30);
+    const upcomingExams = await upcomingExamsQuery.populate({
+      path: 'subjects.subject',
+      select: 'name code'
+    });
 
     // Get recent results
     const recentResults = await ExamResult.find({
@@ -932,14 +936,32 @@ router.get('/dashboard', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, R
         pendingResults: totalResults - publishedResults,
         publicationRate: totalResults > 0 ? Math.round((publishedResults / totalResults) * 100) : 0
       },
-      upcomingExams: upcomingExams.slice(0, 5).map(exam => ({
-        examId: exam.examId,
-        examName: exam.examName,
-        subject: exam.subject,
-        startDate: exam.schedule.startDate,
-        daysUntil: exam.daysUntilExam,
-        status: exam.status
-      })),
+      upcomingExams: upcomingExams.slice(0, 5).map(exam => {
+        const examDate = new Date(exam.examDate);
+        const now = new Date();
+        const daysUntil = Math.ceil((examDate - now) / (1000 * 60 * 60 * 24));
+        
+        // Get first subject name if subjects exist
+        let subjectName = 'N/A';
+        if (exam.subjects && exam.subjects.length > 0) {
+          // If subjects are populated, get the name, otherwise it's just an ID
+          const firstSubject = exam.subjects[0];
+          if (firstSubject.subject && typeof firstSubject.subject === 'object') {
+            subjectName = firstSubject.subject.name || 'N/A';
+          } else if (firstSubject.subjectName) {
+            subjectName = firstSubject.subjectName;
+          }
+        }
+        
+        return {
+          examId: exam.examId || exam._id.toString(),
+          examName: exam.name || exam.examName || 'Unnamed Exam',
+          subject: subjectName,
+          startDate: exam.examDate,
+          daysUntil: daysUntil >= 0 ? daysUntil : 0,
+          status: exam.status || 'scheduled'
+        };
+      }),
       recentResults: recentResults.map(result => ({
         studentName: result.student.personalInfo.fullName,
         studentId: result.student.studentId,

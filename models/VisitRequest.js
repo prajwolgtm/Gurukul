@@ -220,6 +220,50 @@ const VisitRequestSchema = withTimestamps(new mongoose.Schema({
     actionItems: [String],
     followUpRequired: Boolean,
     nextVisitRecommended: Date
+  },
+  
+  // QR Code Pass for Security
+  qrPass: {
+    qrCode: {
+      type: String, // Base64 encoded QR code image
+      default: null
+    },
+    qrData: {
+      type: String, // Encrypted/encoded data for QR verification
+      default: null
+    },
+    passToken: {
+      type: String, // Unique token for verification
+      default: null
+    },
+    generatedAt: {
+      type: Date,
+      default: null
+    },
+    validUntil: {
+      type: Date,
+      default: null
+    },
+    isUsed: {
+      type: Boolean,
+      default: false
+    },
+    usedAt: {
+      type: Date,
+      default: null
+    },
+    usedBy: {
+      type: oid,
+      ref: 'User' // Security guard who scanned
+    },
+    entryTime: {
+      type: Date,
+      default: null
+    },
+    exitTime: {
+      type: Date,
+      default: null
+    }
   }
 }));
 

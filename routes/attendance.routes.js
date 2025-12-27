@@ -42,8 +42,11 @@ router.post('/bulk-initialize', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES
       });
     }
     
-    // Get all active students
-    const students = await Student.find({ isActive: true });
+    // Get all active students (only status: 'active')
+    const students = await Student.find({ 
+      isActive: true,
+      status: 'active'
+    });
     
     if (students.length === 0) {
       return res.status(400).json({
@@ -105,10 +108,13 @@ router.post('/bulk-mark-session', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROL
   try {
     const { date, sessionKey, status, studentIds, notes } = req.body;
     
+    console.log('📋 Bulk mark session request:', { date, sessionKey, status, notes, studentIds });
+    
     if (!date || !sessionKey || !status) {
       return res.status(400).json({
         success: false,
-        message: 'Date, session key, and status are required'
+        message: 'Date, session key, and status are required',
+        received: { date: !!date, sessionKey: !!sessionKey, status: !!status }
       });
     }
     
@@ -144,10 +150,14 @@ router.post('/bulk-mark-session', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROL
       if (studentIds && studentIds.length > 0) {
         students = await Student.find({ 
           _id: { $in: studentIds },
-          isActive: true 
+          isActive: true,
+          status: 'active'
         });
       } else {
-        students = await Student.find({ isActive: true });
+        students = await Student.find({ 
+          isActive: true,
+          status: 'active'
+        });
       }
       
       if (students.length === 0) {
@@ -183,8 +193,36 @@ router.post('/bulk-mark-session', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROL
       attendanceRecords = createdRecords;
     }
     
+    // Validate session key exists in the sessions schema
+    const validSessionKeys = [
+      'prayer_morning', 'sandhya', 'yoga', 'service', 'breakfast',
+      'morning_class', 'midday_prayer', 'lunch', 'afternoon_class',
+      'evening_prayer', 'evening_study', 'dinner', 'night_prayer', 'bedtime'
+    ];
+    
+    if (!validSessionKeys.includes(sessionKey)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid session key: ${sessionKey}. Valid keys are: ${validSessionKeys.join(', ')}`
+      });
+    }
+    
     // Update all records for the specified session
     const updatePromises = attendanceRecords.map(record => {
+      // Ensure the session exists in the record
+      if (!record.sessions || !record.sessions[sessionKey]) {
+        // Initialize the session if it doesn't exist
+        if (!record.sessions) {
+          record.sessions = {};
+        }
+        record.sessions[sessionKey] = {
+          status: 'Present',
+          timeMarked: null,
+          markedBy: null,
+          notes: ''
+        };
+      }
+      
       record.sessions[sessionKey].status = status;
       record.sessions[sessionKey].timeMarked = new Date();
       record.sessions[sessionKey].markedBy = req.user.id;
@@ -193,6 +231,8 @@ router.post('/bulk-mark-session', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROL
     });
     
     await Promise.all(updatePromises);
+    
+    console.log(`✅ Successfully marked ${status} for ${attendanceRecords.length} students in session ${sessionKey}`);
     
     res.json({
       success: true,
@@ -206,10 +246,12 @@ router.post('/bulk-mark-session', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROL
     });
     
   } catch (error) {
+    console.error('❌ Error in bulk-mark-session:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to mark bulk session attendance',
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -432,13 +474,20 @@ router.get('/daily/:date', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARE
     const attendanceDate = new Date(date);
     attendanceDate.setHours(0, 0, 0, 0);
     
-    // First, get all active students (excluding leftout)
+    // First, get all active students (only status: 'active', excluding leftout, graduated, transferred, Completed Moola, Post Graduated)
+    // Must match exactly what student list shows: isActive: true AND status: 'active'
     const activeStudents = await Student.find({
       isActive: true,
-      status: { $ne: 'leftout' }
-    }).select('_id fullName admissionNo').lean();
+      status: { $eq: 'active' }  // Explicitly check for exact match, excluding null/undefined
+    }).select('_id fullName admissionNo status').lean();
     
-    console.log(`📚 Found ${activeStudents.length} active students`);
+    // Double-check: filter out any that don't have status exactly 'active'
+    const verifiedActiveStudents = activeStudents.filter(s => s.status === 'active');
+    
+    console.log(`📚 Found ${activeStudents.length} students with isActive:true, ${verifiedActiveStudents.length} with status:'active'`);
+    
+    // Use only verified active students
+    const finalActiveStudents = verifiedActiveStudents;
     
     // Get attendance records for the date
     const attendanceRecords = await DailyAttendance.find({
@@ -447,11 +496,11 @@ router.get('/daily/:date', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARE
         $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000)
       },
       // Only get attendance for active students
-      student: { $in: activeStudents.map(s => s._id) }
+      student: { $in: finalActiveStudents.map(s => s._id) }
     }).populate({
       path: 'student',
       select: 'fullName admissionNo',
-      match: { isActive: true, status: { $ne: 'leftout' } }
+      match: { isActive: true, status: 'active' }
     }).lean();
     
     // Filter out attendance records with null/undefined student (orphaned records)
@@ -469,7 +518,7 @@ router.get('/daily/:date', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARE
     
     // Merge: Create attendance records for all active students
     // If a student has attendance, use it; otherwise create an empty record structure
-    const mergedAttendanceRecords = activeStudents.map(student => {
+    const mergedAttendanceRecords = finalActiveStudents.map(student => {
       const existingAttendance = attendanceMap.get(student._id.toString());
       if (existingAttendance) {
         return {
@@ -564,8 +613,11 @@ router.get('/report', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CARETAKER
       };
     }
     
-    // Get students based on filters
-    let studentQuery = { isActive: true };
+    // Get students based on filters (only active status)
+    let studentQuery = { 
+      isActive: true,
+      status: 'active'
+    };
     
     if (department) {
       studentQuery['academicInfo.department'] = department;
@@ -662,10 +714,10 @@ router.get('/report/daily/:date/pdf', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL,
     const attendanceDate = new Date(date);
     attendanceDate.setHours(0, 0, 0, 0);
     
-    // Get all active students
+    // Get all active students (only status: 'active')
     const activeStudents = await Student.find({
       isActive: true,
-      status: { $ne: 'leftout' }
+      status: 'active'
     }).select('_id fullName admissionNo').lean();
     
     // Get attendance records for the date
@@ -678,7 +730,7 @@ router.get('/report/daily/:date/pdf', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL,
     }).populate({
       path: 'student',
       select: 'fullName admissionNo',
-      match: { isActive: true, status: { $ne: 'leftout' } }
+      match: { isActive: true, status: 'active' }
     }).lean();
     
     // Filter valid records
@@ -791,10 +843,10 @@ router.get('/report/daily/:date/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPA
     const attendanceDate = new Date(date);
     attendanceDate.setHours(0, 0, 0, 0);
     
-    // Get all active students
+    // Get all active students (only status: 'active')
     const activeStudents = await Student.find({
       isActive: true,
-      status: { $ne: 'leftout' }
+      status: 'active'
     }).select('_id fullName admissionNo').lean();
     
     // Get attendance records for the date
@@ -807,7 +859,7 @@ router.get('/report/daily/:date/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPA
     }).populate({
       path: 'student',
       select: 'fullName admissionNo',
-      match: { isActive: true, status: { $ne: 'leftout' } }
+      match: { isActive: true, status: 'active' }
     }).lean();
     
     // Filter valid records

@@ -760,6 +760,7 @@ router.get('/helpers/students-by-entity', auth, permit(ROLES.TEACHER, ROLES.HOD,
       departmentId, 
       subDepartmentId, 
       batchId, 
+      standard,
       academicYear,
       search,
       limit = 1000  // Increased limit to allow loading all students
@@ -779,6 +780,15 @@ router.get('/helpers/students-by-entity', auth, permit(ROLES.TEACHER, ROLES.HOD,
     
     if (batchId) {
       query.batches = batchId;
+    }
+    
+    if (standard) {
+      // Support both single standard and array of standards
+      if (Array.isArray(standard)) {
+        query.currentStandard = { $in: standard };
+      } else {
+        query.currentStandard = standard;
+      }
     }
     
     // Search functionality

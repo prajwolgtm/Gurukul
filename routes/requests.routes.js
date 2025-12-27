@@ -324,6 +324,13 @@ router.get('/leave', auth, async (req, res) => {
           reviewComments: req.reviewComments,
           isOverdue: req.isOverdue,
           isActive: req.isActive,
+          qrPass: req.qrPass ? {
+            qrCode: req.qrPass.qrCode,
+            qrData: req.qrPass.qrData,
+            validUntil: req.qrPass.validUntil,
+            isUsed: req.qrPass.isUsed,
+            usedAt: req.qrPass.usedAt
+          } : null,
           createdAt: req.createdAt
         })),
         pagination: {
@@ -368,6 +375,13 @@ router.get('/leave', auth, async (req, res) => {
         reviewComments: req.reviewComments,
         isOverdue: req.isOverdue,
         isActive: req.isActive,
+        qrPass: req.qrPass ? {
+          qrCode: req.qrPass.qrCode,
+          qrData: req.qrPass.qrData,
+          validUntil: req.qrPass.validUntil,
+          isUsed: req.qrPass.isUsed,
+          usedAt: req.qrPass.usedAt
+        } : null,
         createdAt: req.createdAt
       })),
       pagination: {
@@ -564,6 +578,19 @@ router.put('/leave/:id/review', auth, async (req, res) => {
     
     if (action === 'approve') {
       updatedRequest = await leaveRequest.approve(reviewerId, comments);
+      
+      // Generate QR pass for approved leave request
+      if (updatedRequest.status === 'approved' && !updatedRequest.qrPass?.qrCode) {
+        const { generateQRPass } = await import('../utils/qrCodeGenerator.js');
+        try {
+          const qrPassData = await generateQRPass(updatedRequest, 'leave');
+          updatedRequest.qrPass = qrPassData;
+          await updatedRequest.save();
+        } catch (error) {
+          console.error('Error generating QR pass for leave request:', error);
+          // Don't fail the approval if QR generation fails
+        }
+      }
     } else if (action === 'reject') {
       updatedRequest = await leaveRequest.reject(reviewerId, comments);
     } else if (action === 'edit') {
@@ -574,6 +601,18 @@ router.put('/leave/:id/review', auth, async (req, res) => {
       if (priority) leaveRequest.priority = priority;
       
       updatedRequest = await leaveRequest.approve(reviewerId, comments || 'Request edited and approved');
+      
+      // Generate QR pass for approved leave request
+      if (updatedRequest.status === 'approved' && !updatedRequest.qrPass?.qrCode) {
+        const { generateQRPass } = await import('../utils/qrCodeGenerator.js');
+        try {
+          const qrPassData = await generateQRPass(updatedRequest, 'leave');
+          updatedRequest.qrPass = qrPassData;
+          await updatedRequest.save();
+        } catch (error) {
+          console.error('Error generating QR pass for leave request:', error);
+        }
+      }
     }
 
     await updatedRequest.populate([
@@ -1002,6 +1041,14 @@ router.get('/visit', auth, async (req, res) => {
         reviewComments: req.reviewComments,
         isToday: req.isToday,
         isOverdue: req.isOverdue,
+        qrPass: req.qrPass ? {
+          qrCode: req.qrPass.qrCode,
+          qrData: req.qrPass.qrData,
+          validUntil: req.qrPass.validUntil,
+          entryTime: req.qrPass.entryTime,
+          exitTime: req.qrPass.exitTime,
+          isUsed: req.qrPass.isUsed
+        } : null,
         createdAt: req.createdAt
       })),
       pagination: {
@@ -1147,6 +1194,19 @@ router.put('/visit/:id/review', auth, async (req, res) => {
         approvedVenue, 
         comments
       );
+      
+      // Generate QR pass for approved visit request
+      if (updatedRequest.status === 'approved' && !updatedRequest.qrPass?.qrCode) {
+        const { generateQRPass } = await import('../utils/qrCodeGenerator.js');
+        try {
+          const qrPassData = await generateQRPass(updatedRequest, 'visit');
+          updatedRequest.qrPass = qrPassData;
+          await updatedRequest.save();
+        } catch (error) {
+          console.error('Error generating QR pass for visit request:', error);
+          // Don't fail the approval if QR generation fails
+        }
+      }
     } else if (action === 'reject') {
       updatedRequest = await visitRequest.reject(reviewerId, comments);
     } else if (action === 'edit') {
@@ -1165,6 +1225,18 @@ router.put('/visit/:id/review', auth, async (req, res) => {
         approvedVenue, 
         comments || 'Request edited and approved'
       );
+      
+      // Generate QR pass for approved visit request
+      if (updatedRequest.status === 'approved' && !updatedRequest.qrPass?.qrCode) {
+        const { generateQRPass } = await import('../utils/qrCodeGenerator.js');
+        try {
+          const qrPassData = await generateQRPass(updatedRequest, 'visit');
+          updatedRequest.qrPass = qrPassData;
+          await updatedRequest.save();
+        } catch (error) {
+          console.error('Error generating QR pass for visit request:', error);
+        }
+      }
     }
 
     await updatedRequest.populate([
@@ -1515,6 +1587,271 @@ router.put('/visit/:id/cancel', auth, permit(ROLES.PARENT), async (req, res) => 
     res.status(500).json({
       success: false,
       message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// ==================== QR CODE VERIFICATION (SECURITY) ====================
+
+// @route   POST /api/requests/verify-qr
+// @desc    Verify QR code pass (Security/Admin)
+// @access  Private (Admin, Coordinator, Caretaker)
+router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CARETAKER), async (req, res) => {
+  try {
+    const { qrData, action } = req.body; // action: 'entry' or 'exit'
+    
+    if (!qrData) {
+      return res.status(400).json({
+        success: false,
+        message: 'QR code data is required'
+      });
+    }
+
+    // Verify QR code
+    const { verifyQRPass } = await import('../utils/qrCodeGenerator.js');
+    const verification = verifyQRPass(qrData);
+
+    if (!verification.valid) {
+      return res.status(400).json({
+        success: false,
+        message: verification.error || 'Invalid QR code',
+        valid: false
+      });
+    }
+
+    const { requestId, type, token, studentId, parentId } = verification.payload;
+
+    // Find the request
+    let request = null;
+    if (type === 'leave') {
+      request = await LeaveRequest.findOne({ requestId, 'qrPass.passToken': token })
+        .populate('student', 'fullName admissionNo')
+        .populate('requestedBy', 'fullName email phone');
+    } else if (type === 'visit') {
+      request = await VisitRequest.findOne({ requestId, 'qrPass.passToken': token })
+        .populate('student', 'fullName admissionNo')
+        .populate('requestedBy', 'fullName email phone')
+        .populate('personToMeet', 'fullName role');
+    }
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found or invalid token',
+        valid: false
+      });
+    }
+
+    // Check if already used (for leave requests)
+    if (type === 'leave' && request.qrPass.isUsed) {
+      return res.status(400).json({
+        success: false,
+        message: 'This pass has already been used',
+        valid: false,
+        used: true,
+        usedAt: request.qrPass.usedAt
+      });
+    }
+
+    // Handle entry/exit for visit requests
+    if (type === 'visit') {
+      if (action === 'entry') {
+        if (request.qrPass.entryTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Visitor has already entered',
+            valid: true,
+            alreadyEntered: true
+          });
+        }
+        request.qrPass.entryTime = new Date();
+        request.checkInTime = new Date();
+        await request.save();
+      } else if (action === 'exit') {
+        if (!request.qrPass.entryTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Visitor has not entered yet',
+            valid: true,
+            notEntered: true
+          });
+        }
+        if (request.qrPass.exitTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Visitor has already exited',
+            valid: true,
+            alreadyExited: true
+          });
+        }
+        request.qrPass.exitTime = new Date();
+        request.checkOutTime = new Date();
+        await request.save();
+      }
+    } else if (type === 'leave') {
+      // Mark leave pass as used
+      request.qrPass.isUsed = true;
+      request.qrPass.usedAt = new Date();
+      request.qrPass.usedBy = req.user.id;
+      await request.save();
+    }
+
+    // Prepare response
+    const response = {
+      success: true,
+      valid: true,
+      message: type === 'visit' 
+        ? (action === 'entry' ? 'Entry recorded successfully' : 'Exit recorded successfully')
+        : 'Leave pass verified successfully',
+      request: {
+        requestId: request.requestId,
+        type,
+        status: request.status,
+        student: request.student ? {
+          name: request.student.fullName,
+          admissionNo: request.student.admissionNo
+        } : null,
+        parent: {
+          name: request.requestedBy.fullName,
+          email: request.requestedBy.email,
+          phone: request.requestedBy.phone
+        }
+      }
+    };
+
+    if (type === 'visit') {
+      response.request.visitDetails = {
+        visitType: request.visitType,
+        approvedDate: request.approvedDate || request.preferredDate,
+        approvedStartTime: request.approvedStartTime || request.preferredStartTime,
+        approvedEndTime: request.approvedEndTime || request.preferredEndTime,
+        approvedVenue: request.approvedVenue,
+        entryTime: request.qrPass.entryTime,
+        exitTime: request.qrPass.exitTime,
+        personToMeet: request.personToMeet ? {
+          name: request.personToMeet.fullName,
+          role: request.personToMeet.role
+        } : null
+      };
+    } else if (type === 'leave') {
+      response.request.leaveDetails = {
+        leaveType: request.leaveType,
+        startDate: request.startDate,
+        endDate: request.endDate,
+        reason: request.reason
+      };
+    }
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Error verifying QR code:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying QR code',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/requests/verify-qr/:requestId
+// @desc    Get QR pass details by request ID (for manual entry)
+// @access  Private (Admin, Coordinator, Caretaker)
+router.get('/verify-qr/:requestId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CARETAKER), async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { type } = req.query; // 'leave' or 'visit'
+
+    let request = null;
+    if (type === 'leave') {
+      request = await LeaveRequest.findOne({ requestId })
+        .populate('student', 'fullName admissionNo')
+        .populate('requestedBy', 'fullName email phone');
+    } else if (type === 'visit') {
+      request = await VisitRequest.findOne({ requestId })
+        .populate('student', 'fullName admissionNo')
+        .populate('requestedBy', 'fullName email phone')
+        .populate('personToMeet', 'fullName role');
+    } else {
+      // Try both
+      request = await LeaveRequest.findOne({ requestId })
+        .populate('student', 'fullName admissionNo')
+        .populate('requestedBy', 'fullName email phone');
+      
+      if (!request) {
+        request = await VisitRequest.findOne({ requestId })
+          .populate('student', 'fullName admissionNo')
+          .populate('requestedBy', 'fullName email phone')
+          .populate('personToMeet', 'fullName role');
+      }
+    }
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found'
+      });
+    }
+
+    if (request.status !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: 'Request is not approved',
+        status: request.status
+      });
+    }
+
+    if (!request.qrPass || !request.qrPass.qrCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'QR pass not generated for this request'
+      });
+    }
+
+    const requestType = request.constructor.modelName === 'LeaveRequest' ? 'leave' : 'visit';
+
+    res.json({
+      success: true,
+      request: {
+        requestId: request.requestId,
+        type: requestType,
+        student: request.student ? {
+          name: request.student.fullName,
+          admissionNo: request.student.admissionNo
+        } : null,
+        parent: {
+          name: request.requestedBy.fullName,
+          email: request.requestedBy.email,
+          phone: request.requestedBy.phone
+        },
+        qrPass: {
+          validUntil: request.qrPass.validUntil,
+          isUsed: request.qrPass.isUsed,
+          usedAt: request.qrPass.usedAt,
+          entryTime: request.qrPass.entryTime,
+          exitTime: request.qrPass.exitTime
+        }
+      },
+      details: requestType === 'visit' ? {
+        visitType: request.visitType,
+        approvedDate: request.approvedDate || request.preferredDate,
+        approvedStartTime: request.approvedStartTime || request.preferredStartTime,
+        approvedEndTime: request.approvedEndTime || request.preferredEndTime,
+        approvedVenue: request.approvedVenue
+      } : {
+        leaveType: request.leaveType,
+        startDate: request.startDate,
+        endDate: request.endDate,
+        reason: request.reason
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching QR pass details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching QR pass details',
       error: error.message
     });
   }

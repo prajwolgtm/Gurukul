@@ -115,7 +115,8 @@ router.get('/student-info', auth, permit(ROLES.PARENT), async (req, res) => {
         shaakha: student.shaakha,
         gothra: student.gothra,
         status: student.status,
-        remarks: student.remarks
+        remarks: student.remarks,
+        latestHealth: student.latestHealth || null
       }
     });
   } catch (error) {

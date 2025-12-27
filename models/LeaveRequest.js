@@ -133,6 +133,42 @@ const LeaveRequestSchema = withTimestamps(new mongoose.Schema({
   isRecurring: {
     type: Boolean,
     default: false
+  },
+  
+  // QR Code Pass for Security
+  qrPass: {
+    qrCode: {
+      type: String, // Base64 encoded QR code image
+      default: null
+    },
+    qrData: {
+      type: String, // Encrypted/encoded data for QR verification
+      default: null
+    },
+    passToken: {
+      type: String, // Unique token for verification
+      default: null
+    },
+    generatedAt: {
+      type: Date,
+      default: null
+    },
+    validUntil: {
+      type: Date,
+      default: null
+    },
+    isUsed: {
+      type: Boolean,
+      default: false
+    },
+    usedAt: {
+      type: Date,
+      default: null
+    },
+    usedBy: {
+      type: oid,
+      ref: 'User' // Security guard who scanned
+    }
   }
 }));
 

@@ -3,6 +3,7 @@ import Exam from '../models/Exam.js';
 import Subject from '../models/Subject.js';
 import Student from '../models/Student.js';
 import ExamResult from '../models/ExamResult.js';
+import ExamMarks from '../models/ExamMarks.js';
 import Department from '../models/Department.js';
 import SubDepartment from '../models/SubDepartment.js';
 import Batch from '../models/Batch.js';
@@ -215,6 +216,9 @@ router.get('/', auth, async (req, res) => {
           } else if (exam.selectionType === 'batch' && exam.targetBatches.length > 0) {
             studentQuery.batches = { $in: exam.targetBatches.map(b => b._id || b) };
             count = await Student.countDocuments(studentQuery);
+          } else if (exam.selectionType === 'standard' && exam.targetStandards && exam.targetStandards.length > 0) {
+            studentQuery.currentStandard = { $in: exam.targetStandards };
+            count = await Student.countDocuments(studentQuery);
           }
         }
       } catch (error) {
@@ -267,15 +271,44 @@ router.get('/:id', auth, async (req, res) => {
       });
     }
 
-    // Get eligible students based on exam scope
+    // Get students for this exam
+    // Priority 1: Students who have results (preserve historical data)
+    // Priority 2: Students who were eligible at exam creation time
     let eligibleStudents = [];
+    let studentsWithResults = [];
 
+    // Check if exam has results - if yes, get students from results (preserves historical data)
+    const results = await ExamResult.find({ exam: exam._id }).select('student').lean();
+    const marks = await ExamMarks.find({ exam: exam._id }).select('student').lean();
+    
+    const studentIdsFromResults = [
+      ...results.map(r => r.student),
+      ...marks.map(m => m.student)
+    ].filter(Boolean);
+
+    if (studentIdsFromResults.length > 0) {
+      // Exam has results - show students from results (regardless of current status)
+      studentsWithResults = await Student.find({ _id: { $in: studentIdsFromResults } })
+        .select('admissionNo fullName department subDepartments batches status')
+        .populate('department', 'name code')
+        .populate('subDepartments', 'name code')
+        .populate('batches', 'name code academicYear')
+        .sort({ fullName: 1 });
+    }
+
+    // Get eligible students based on exam scope (for exams without results yet)
     if (exam.selectionType === 'custom') {
-      eligibleStudents = exam.customStudents;
+      // For custom exams, use stored customStudents list
+      eligibleStudents = await Student.find({ _id: { $in: exam.customStudents.map(s => s._id || s) } })
+        .select('admissionNo fullName department subDepartments batches')
+        .populate('department', 'name code')
+        .populate('subDepartments', 'name code')
+        .populate('batches', 'name code academicYear')
+        .sort({ fullName: 1 });
     } else {
       let studentQuery = { 
-        isActive: true, 
-        status: { $ne: 'leftout' } // Exclude leftout students from exams
+        isActive: true,
+        status: 'active' // Only active students for new exams
       };
 
       if (exam.selectionType === 'department') {
@@ -295,6 +328,25 @@ router.get('/:id', auth, async (req, res) => {
         studentQuery.subDepartments = { $in: exam.targetSubDepartments.map(sd => sd._id || sd) };
       } else if (exam.selectionType === 'batch' && exam.targetBatches.length > 0) {
         studentQuery.batches = { $in: exam.targetBatches.map(b => b._id || b) };
+      } else if (exam.selectionType === 'standard' && exam.targetStandards && exam.targetStandards.length > 0) {
+        studentQuery.currentStandard = { $in: exam.targetStandards };
+      }
+
+      // Filter by academic year to prevent new students from appearing in old exams
+      // Match students whose batches match the exam's academic year
+      if (exam.academicYear && exam.targetBatches && exam.targetBatches.length > 0) {
+        // Get batch IDs that match the exam's academic year
+        const matchingBatches = await Batch.find({
+          _id: { $in: exam.targetBatches.map(b => b._id || b) },
+          academicYear: exam.academicYear
+        }).select('_id').lean();
+        
+        if (matchingBatches.length > 0) {
+          studentQuery.batches = { $in: matchingBatches.map(b => b._id) };
+        } else {
+          // If no batches match the academic year, set empty array to show no students
+          studentQuery.batches = { $in: [] };
+        }
       }
 
       eligibleStudents = await Student.find(studentQuery)
@@ -305,11 +357,19 @@ router.get('/:id', auth, async (req, res) => {
         .sort({ fullName: 1 });
     }
 
+    // If exam has results, prioritize students from results (historical data)
+    // Otherwise, show eligible students
+    const finalStudents = studentsWithResults.length > 0 ? studentsWithResults : eligibleStudents;
+
     res.json({
       success: true,
       exam,
-      eligibleStudents,
-      eligibleStudentsCount: eligibleStudents.length
+      eligibleStudents: finalStudents,
+      eligibleStudentsCount: finalStudents.length,
+      hasResults: studentsWithResults.length > 0,
+      note: studentsWithResults.length > 0 
+        ? 'Showing students from exam results (historical data preserved)' 
+        : 'Showing eligible students based on exam criteria'
     });
   } catch (error) {
     console.error('Error fetching exam:', error);
@@ -341,7 +401,7 @@ router.post('/', auth, async (req, res) => {
 
     const {
       title, name, description, examScope, selectionType, department, departments, targetDepartments, subDepartments, batches,
-      customStudents, subjects, examDate, startTime, endTime, duration, examType,
+      targetStandards, customStudents, subjects, examDate, startTime, endTime, duration, examType,
       instructions, remarks, venue, useDivisions, divisions
     } = req.body;
     
@@ -396,6 +456,13 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Batches are required for batch scope'
+      });
+    }
+
+    if (examScopeValue === 'standard' && (!targetStandards || targetStandards.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Standards are required for standard scope'
       });
     }
 
@@ -480,6 +547,7 @@ router.post('/', auth, async (req, res) => {
         : undefined,
       targetSubDepartments: subDepartments,
       targetBatches: batches,
+      targetStandards: examScopeValue === 'standard' ? targetStandards : undefined,
       customStudents,
       subjects: formattedSubjects,
       examDate,

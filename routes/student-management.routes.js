@@ -378,7 +378,7 @@ router.delete('/:id', auth, async (req, res) => {
     // Soft delete
     await Student.findByIdAndUpdate(req.params.id, {
       isActive: false,
-      status: 'inactive'
+      status: 'leftout'
     });
 
     res.json({

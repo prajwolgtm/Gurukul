@@ -47,7 +47,7 @@ const ExamSchema = new mongoose.Schema({
   // Student Selection Criteria
   selectionType: {
     type: String,
-    enum: ['department', 'subDepartment', 'batch', 'custom'],
+    enum: ['department', 'subDepartment', 'batch', 'standard', 'custom'],
     required: true
   },
 
@@ -67,6 +67,10 @@ const ExamSchema = new mongoose.Schema({
   targetBatches: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Batch'
+  }],
+  targetStandards: [{
+    type: String,
+    enum: ['Pratham 1st Year', 'Pratham 2nd Year', 'Pratham 3rd Year', 'Pravesh 1st Year', 'Pravesh 2nd Year', 'Moola 1st Year', 'Moola 2nd Year', 'B.A. 1st Year', 'B.A. 2nd Year', 'B.A. 3rd Year', 'M.A. 1st Year', 'M.A. 2nd Year']
   }],
   customStudents: [{
     type: mongoose.Schema.Types.ObjectId,

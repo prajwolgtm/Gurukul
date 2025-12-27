@@ -162,7 +162,7 @@ const StudentSchema = new mongoose.Schema({
   // Status
   status: {
     type: String,
-    enum: ['active', 'inactive', 'graduated', 'transferred', 'leftout'],
+    enum: ['active', 'graduated', 'transferred', 'leftout', 'Completed Moola', 'Post Graduated'],
     default: 'active'
   },
   isActive: {
@@ -175,6 +175,96 @@ const StudentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+
+  // Health Information
+  latestHealth: {
+    heightCm: {
+      type: Number,
+      min: 0
+    },
+    weightKg: {
+      type: Number,
+      min: 0
+    },
+    condition: {
+      type: String,
+      trim: true,
+      maxlength: 500
+    },
+    notes: {
+      type: String,
+      trim: true,
+      maxlength: 1000
+    },
+    lastCheckupDate: {
+      type: Date
+    }
+  },
+
+  healthRecords: [{
+    _id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: () => new mongoose.Types.ObjectId()
+    },
+    date: {
+      type: Date,
+      default: Date.now
+    },
+    heightCm: {
+      type: Number,
+      min: 0
+    },
+    weightKg: {
+      type: Number,
+      min: 0
+    },
+    condition: {
+      type: String,
+      trim: true,
+      maxlength: 500
+    },
+    remarks: {
+      type: String,
+      trim: true,
+      maxlength: 1000
+    },
+    checkupType: {
+      type: String,
+      enum: ['routine', 'hospital', 'emergency', 'other'],
+      default: 'routine'
+    },
+    hospitalName: {
+      type: String,
+      trim: true,
+      maxlength: 200
+    },
+    reason: {
+      type: String,
+      trim: true,
+      maxlength: 500
+    },
+    diagnosis: {
+      type: String,
+      trim: true,
+      maxlength: 500
+    },
+    treatment: {
+      type: String,
+      trim: true,
+      maxlength: 1000
+    },
+    followUpDate: {
+      type: Date
+    },
+    recordedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    recordedByName: {
+      type: String,
+      trim: true
+    }
+  }],
 
   // Simple wallet / account statement
   wallet: {

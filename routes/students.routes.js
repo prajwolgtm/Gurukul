@@ -63,7 +63,101 @@ router.get('/', auth, async (req, res) => {
       ];
     }
 
-    // Pagination options
+    // Handle special sorting for admission numbers (format: "number/year")
+    if (sortBy === 'admissionNo') {
+      // For admission numbers, we need to sort by year first, then by number
+      // We'll use aggregation pipeline for this
+      const sortDirection = sortOrder === 'desc' ? -1 : 1;
+      
+      // Use aggregation to parse and sort admission numbers
+      const pipeline = [
+        { $match: query },
+        {
+          $addFields: {
+            admissionNoParts: {
+              $split: [{ $ifNull: ['$admissionNo', '0/0'] }, '/']
+            }
+          }
+        },
+        {
+          $addFields: {
+            admissionNoYear: {
+              $toInt: {
+                $ifNull: [
+                  { $arrayElemAt: ['$admissionNoParts', 1] },
+                  '0'
+                ]
+              }
+            },
+            admissionNoNumber: {
+              $toInt: {
+                $ifNull: [
+                  { $arrayElemAt: ['$admissionNoParts', 0] },
+                  '0'
+                ]
+              }
+            }
+          }
+        },
+        {
+          $sort: {
+            admissionNoYear: sortDirection,
+            admissionNoNumber: sortDirection
+          }
+        },
+        {
+          $project: {
+            admissionNoParts: 0,
+            admissionNoYear: 0,
+            admissionNoNumber: 0
+          }
+        },
+        {
+          $skip: (parseInt(page) - 1) * parseInt(limit)
+        },
+        {
+          $limit: parseInt(limit)
+        }
+      ];
+
+      // Execute aggregation
+      const students = await Student.aggregate(pipeline);
+      const totalDocs = await Student.countDocuments(query);
+      
+      // Convert aggregation results back to Mongoose documents for population
+      const studentIds = students.map(s => s._id);
+      const populatedStudents = await Student.find({ _id: { $in: studentIds } })
+        .populate([
+          { path: 'department', select: 'name code' },
+          { path: 'subDepartments', select: 'name code' },
+          { path: 'batches', select: 'name code academicYear' }
+        ]);
+      
+      // Create a map for quick lookup
+      const studentMap = new Map();
+      populatedStudents.forEach(s => {
+        studentMap.set(s._id.toString(), s);
+      });
+      
+      // Maintain the sort order from aggregation
+      const sortedPopulated = studentIds
+        .map(id => studentMap.get(id.toString()))
+        .filter(Boolean);
+
+      return res.json({
+        success: true,
+        students: sortedPopulated,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(totalDocs / parseInt(limit)),
+          totalStudents: totalDocs,
+          hasNextPage: parseInt(page) < Math.ceil(totalDocs / parseInt(limit)),
+          hasPrevPage: parseInt(page) > 1
+        }
+      });
+    }
+
+    // Regular sorting for other fields
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -441,8 +535,8 @@ router.delete('/:id', auth, async (req, res) => {
       });
     }
 
-    // Soft delete - mark as inactive
-    student.status = 'inactive';
+    // Soft delete - mark as leftout
+    student.status = 'leftout';
     student.isActive = false;
     await student.save();
 
@@ -712,9 +806,11 @@ router.get('/stats/overview', auth, async (req, res) => {
   try {
     const stats = await Promise.all([
       Student.countDocuments({ status: 'active' }),
-      Student.countDocuments({ status: 'inactive' }),
       Student.countDocuments({ status: 'graduated' }),
       Student.countDocuments({ status: 'transferred' }),
+      Student.countDocuments({ status: 'leftout' }),
+      Student.countDocuments({ status: 'Completed Moola' }),
+      Student.countDocuments({ status: 'Post Graduated' }),
       Student.aggregate([
         { $match: { status: 'active' } },
         { $group: { _id: '$department', count: { $sum: 1 } } },
@@ -728,11 +824,13 @@ router.get('/stats/overview', auth, async (req, res) => {
       success: true,
       stats: {
         active: stats[0],
-        inactive: stats[1],
-        graduated: stats[2],
-        transferred: stats[3],
-        total: stats[0] + stats[1] + stats[2] + stats[3],
-        byDepartment: stats[4]
+        graduated: stats[1],
+        transferred: stats[2],
+        leftout: stats[3],
+        completedMoola: stats[4],
+        postGraduated: stats[5],
+        total: stats[0] + stats[1] + stats[2] + stats[3] + stats[4] + stats[5],
+        byDepartment: stats[6]
       }
     });
 
@@ -741,6 +839,116 @@ router.get('/stats/overview', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching statistics',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/students/:id/health-records
+// @desc    Get health records for a student
+// @access  Private
+router.get('/:id/health-records', auth, async (req, res) => {
+  try {
+    const student = await Student.findById(req.params.id).select('fullName admissionNo healthRecords latestHealth');
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        student: {
+          _id: student._id,
+          fullName: student.fullName,
+          admissionNo: student.admissionNo,
+          latestHealth: student.latestHealth || null
+        },
+        records: student.healthRecords || []
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching health records:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching health records',
+      error: error.message
+    });
+  }
+});
+
+// @route   POST /api/students/:id/health-records
+// @desc    Add a health record for a student
+// @access  Private (Admin / Principal / Coordinator / Caretaker)
+router.post('/:id/health-records', auth, async (req, res) => {
+  try {
+    const { user } = req;
+    const {
+      date,
+      heightCm,
+      weightKg,
+      condition,
+      remarks,
+      checkupType,
+      hospitalName,
+      reason,
+      diagnosis,
+      treatment,
+      followUpDate
+    } = req.body;
+
+    const student = await Student.findById(req.params.id);
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student not found'
+      });
+    }
+
+    const record = {
+      date: date ? new Date(date) : new Date(),
+      heightCm,
+      weightKg,
+      condition,
+      remarks,
+      checkupType,
+      hospitalName,
+      reason,
+      diagnosis,
+      treatment,
+      followUpDate: followUpDate ? new Date(followUpDate) : undefined,
+      recordedBy: user?._id || user?.id,
+      recordedByName: user?.fullName || user?.name || user?.email
+    };
+
+    student.healthRecords.push(record);
+
+    // Update latestHealth summary
+    student.latestHealth = {
+      heightCm,
+      weightKg,
+      condition,
+      notes: remarks,
+      lastCheckupDate: record.date
+    };
+
+    await student.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Health record added successfully',
+      data: {
+        latestHealth: student.latestHealth,
+        record: student.healthRecords[student.healthRecords.length - 1]
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error adding health record:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error adding health record',
       error: error.message
     });
   }
