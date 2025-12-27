@@ -74,27 +74,55 @@ router.get('/', auth, async (req, res) => {
         { $match: query },
         {
           $addFields: {
+            // Convert to string and split by '/'
+            admissionNoStr: {
+              $toString: { $ifNull: ['$admissionNo', '0/0'] }
+            }
+          }
+        },
+        {
+          $addFields: {
+            // Split by '/' - if no '/', the array will have one element
             admissionNoParts: {
-              $split: [{ $ifNull: ['$admissionNo', '0/0'] }, '/']
+              $split: [
+                {
+                  $cond: {
+                    if: { $gt: [{ $indexOfBytes: ['$admissionNoStr', '/'] }, -1] },
+                    then: '$admissionNoStr',
+                    else: { $concat: ['$admissionNoStr', '/0'] }
+                  }
+                },
+                '/'
+              ]
             }
           }
         },
         {
           $addFields: {
             admissionNoYear: {
-              $toInt: {
-                $ifNull: [
-                  { $arrayElemAt: ['$admissionNoParts', 1] },
-                  '0'
-                ]
+              $convert: {
+                input: {
+                  $ifNull: [
+                    { $arrayElemAt: ['$admissionNoParts', 1] },
+                    '0'
+                  ]
+                },
+                to: 'int',
+                onError: 0,
+                onNull: 0
               }
             },
             admissionNoNumber: {
-              $toInt: {
-                $ifNull: [
-                  { $arrayElemAt: ['$admissionNoParts', 0] },
-                  '0'
-                ]
+              $convert: {
+                input: {
+                  $ifNull: [
+                    { $arrayElemAt: ['$admissionNoParts', 0] },
+                    '0'
+                  ]
+                },
+                to: 'int',
+                onError: 0,
+                onNull: 0
               }
             }
           }
@@ -109,7 +137,8 @@ router.get('/', auth, async (req, res) => {
           $project: {
             admissionNoParts: 0,
             admissionNoYear: 0,
-            admissionNoNumber: 0
+            admissionNoNumber: 0,
+            admissionNoStr: 0
           }
         },
         {
