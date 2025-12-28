@@ -932,14 +932,27 @@ router.post('/:departmentId/batches', auth, async (req, res) => {
 // @access  Private
 router.get('/batches', auth, async (req, res) => {
   try {
-    const { departmentId, subDepartmentId, academicYear, status } = req.query;
+    const { departmentId, subDepartmentId, academicYear, status, includeInactive } = req.query;
     
-    // Build query - don't filter by isActive/status by default to show all batches
+    // Build query - by default, only show active batches (not deleted)
     let query = {};
     
-    // Only filter by status if explicitly provided
+    // If includeInactive is NOT true, filter out deleted batches
+    if (includeInactive !== 'true') {
+      query.isActive = true;
+      query.status = { $ne: 'discontinued' };
+    }
+    
+    // Filter by status if explicitly provided (and not 'all')
     if (status && status !== 'all') {
       query.status = status;
+      // If status is 'discontinued', also set isActive to false
+      if (status === 'discontinued') {
+        query.isActive = false;
+      } else if (includeInactive !== 'true') {
+        // For other statuses, ensure isActive is true (unless includeInactive is set)
+        query.isActive = true;
+      }
     }
     
     if (departmentId) {
@@ -1008,15 +1021,32 @@ router.get('/batches', auth, async (req, res) => {
 router.get('/:departmentId/batches', auth, async (req, res) => {
   try {
     const { departmentId } = req.params;
-    const { subDepartmentId, academicYear, status } = req.query;
+    const { subDepartmentId, academicYear, status, includeInactive } = req.query;
 
+    // Build query - by default, only show active batches (not deleted)
     let query = { 
       department: departmentId
     };
 
-    // Only filter by status if explicitly provided
+    // If includeInactive is true, show all batches including deleted ones
+    if (includeInactive === 'true') {
+      // No additional filters - show everything for this department
+    } else {
+      // Default: only show active, non-discontinued batches
+      query.isActive = true;
+      query.status = { $ne: 'discontinued' };
+    }
+
+    // Filter by status if explicitly provided (and not 'all')
     if (status && status !== 'all') {
       query.status = status;
+      // If status is 'discontinued', also set isActive to false
+      if (status === 'discontinued') {
+        query.isActive = false;
+      } else if (!includeInactive) {
+        // For other statuses, ensure isActive is true (unless includeInactive is set)
+        query.isActive = true;
+      }
     }
 
     if (subDepartmentId) {
@@ -1304,14 +1334,31 @@ router.delete('/:departmentId/batches/:id', auth, async (req, res) => {
       });
     }
 
-    // Check if batch has students (students have batches array)
+    // Check if batch has active students (students have batches array)
+    // Only count students that are actually active (not soft-deleted)
     const Student = (await import('../models/Student.js')).default;
-    const studentCount = await Student.countDocuments({ batches: id, isActive: true });
     
-    if (studentCount > 0) {
+    // Check for active students - match the same criteria used in students list
+    const activeStudentCount = await Student.countDocuments({ 
+      batches: id, 
+      isActive: true,
+      status: 'active' // Only count truly active students
+    });
+    
+    // Also check total students in batch for debugging
+    const totalStudentsInBatch = await Student.countDocuments({ batches: id });
+    const isActiveTrueCount = await Student.countDocuments({ batches: id, isActive: true });
+    
+    console.log(`📊 Batch deletion check for batch ${id}:`, {
+      activeStudents: activeStudentCount,
+      totalStudents: totalStudentsInBatch,
+      isActiveTrue: isActiveTrueCount
+    });
+    
+    if (activeStudentCount > 0) {
       return res.status(400).json({
         success: false,
-        message: `Cannot delete batch. It has ${studentCount} active students.`
+        message: `Cannot delete batch. It has ${activeStudentCount} active student(s). Please remove or transfer students from this batch first.`
       });
     }
 
@@ -1350,19 +1397,23 @@ router.get('/structure', auth, async (req, res) => {
         .populate('coordinator', 'fullName email')
         .sort({ name: 1 });
 
-      // Get direct batches (no sub-department) - don't filter by status
+      // Get direct batches (no sub-department) - only active, non-deleted batches
       const directBatches = await Batch.find({
         department: dept._id,
-        subDepartment: null
+        subDepartment: null,
+        isActive: true,
+        status: { $ne: 'discontinued' }
       })
         .populate('classTeacher', 'fullName email')
         .sort({ name: 1 });
 
-      // Get batches for each sub-department - don't filter by status
+      // Get batches for each sub-department - only active, non-deleted batches
       const subDepartmentsWithBatches = await Promise.all(subDepartments.map(async (subDept) => {
         const batches = await Batch.find({
           department: dept._id,
-          subDepartment: subDept._id
+          subDepartment: subDept._id,
+          isActive: true,
+          status: { $ne: 'discontinued' }
         })
           .populate('classTeacher', 'fullName email')
           .sort({ name: 1 });
