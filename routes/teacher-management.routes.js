@@ -253,7 +253,7 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     const {
-      fullName, phone, qualification, specialization, experience,
+      fullName, phone, employeeId, qualification, specialization, experience,
       joiningDate, departments, subDepartments, batches,
       subjects, address, emergencyContact, remarks, status
     } = req.body;
@@ -270,6 +270,7 @@ router.put('/:id', auth, async (req, res) => {
     const updatedTeacher = await Teacher.findByIdAndUpdate(
       req.params.id,
       {
+        ...(employeeId && { employeeId }),
         qualification,
         specialization,
         experience,
