@@ -268,6 +268,10 @@ router.get('/', auth, async (req, res) => {
           } else if (exam.selectionType === 'batch' && exam.targetBatches.length > 0) {
             studentQuery.batches = { $in: exam.targetBatches.map(b => b._id || b) };
             count = await Student.countDocuments(studentQuery);
+          } else if (exam.selectionType === 'departmentStandard' && exam.targetDepartment && exam.targetDepartmentStandard) {
+            studentQuery.department = exam.targetDepartment._id || exam.targetDepartment;
+            studentQuery.currentStandard = exam.targetDepartmentStandard;
+            count = await Student.countDocuments(studentQuery);
           } else if (exam.selectionType === 'standard' && exam.targetStandards && exam.targetStandards.length > 0) {
             studentQuery.currentStandard = { $in: exam.targetStandards };
             count = await Student.countDocuments(studentQuery);
@@ -380,6 +384,9 @@ router.get('/:id', auth, async (req, res) => {
         studentQuery.subDepartments = { $in: exam.targetSubDepartments.map(sd => sd._id || sd) };
       } else if (exam.selectionType === 'batch' && exam.targetBatches.length > 0) {
         studentQuery.batches = { $in: exam.targetBatches.map(b => b._id || b) };
+      } else if (exam.selectionType === 'departmentStandard' && exam.targetDepartment && exam.targetDepartmentStandard) {
+        studentQuery.department = exam.targetDepartment._id || exam.targetDepartment;
+        studentQuery.currentStandard = exam.targetDepartmentStandard;
       } else if (exam.selectionType === 'standard' && exam.targetStandards && exam.targetStandards.length > 0) {
         studentQuery.currentStandard = { $in: exam.targetStandards };
       }
@@ -453,7 +460,7 @@ router.post('/', auth, async (req, res) => {
 
     const {
       title, name, description, examScope, selectionType, department, departments, targetDepartments, subDepartments, batches,
-      targetStandards, customStudents, subjects, examDate, startTime, endTime, duration, examType,
+      targetStandards, targetDepartmentStandard, customStudents, subjects, examDate, startTime, endTime, duration, examType,
       instructions, remarks, venue, useDivisions, divisions
     } = req.body;
     
@@ -509,6 +516,21 @@ router.post('/', auth, async (req, res) => {
         success: false,
         message: 'Batches are required for batch scope'
       });
+    }
+
+    if (examScopeValue === 'departmentStandard') {
+      if (!department) {
+        return res.status(400).json({
+          success: false,
+          message: 'Department is required for department + standard scope'
+        });
+      }
+      if (!targetDepartmentStandard) {
+        return res.status(400).json({
+          success: false,
+          message: 'Standard is required for department + standard scope'
+        });
+      }
     }
 
     if (examScopeValue === 'standard' && (!targetStandards || targetStandards.length === 0)) {
@@ -600,6 +622,7 @@ router.post('/', auth, async (req, res) => {
       targetSubDepartments: subDepartments,
       targetBatches: batches,
       targetStandards: examScopeValue === 'standard' ? targetStandards : undefined,
+      targetDepartmentStandard: examScopeValue === 'departmentStandard' ? targetDepartmentStandard : undefined,
       customStudents,
       subjects: formattedSubjects,
       examDate,

@@ -123,10 +123,15 @@ router.get('/', auth, async (req, res) => {
     const departmentsWithCounts = await Promise.all(departments.map(async (dept) => {
       // Count students from both Student model (direct department field) and StudentAssignment (via assignments)
       // Count all students regardless of status
+      // Count only active, non-deleted batches (matching the batch list filter)
       const [studentsFromModel, studentsFromAssignments, totalBatches] = await Promise.all([
         Student.countDocuments({ department: dept._id }),
         StudentAssignment.countDocuments({ department: dept._id }),
-        Batch.countDocuments({ department: dept._id })
+        Batch.countDocuments({ 
+          department: dept._id,
+          isActive: true,
+          status: { $ne: 'discontinued' }
+        })
       ]);
       
       // Total students = students with direct department field + students assigned via StudentAssignment
@@ -240,7 +245,11 @@ router.put('/:id', auth, async (req, res) => {
       StudentAssignment.countDocuments({ department: updatedDepartment._id })
     ]);
     const totalStudents = studentsFromModel + studentsFromAssignments;
-    const totalBatches = await Batch.countDocuments({ department: updatedDepartment._id });
+    const totalBatches = await Batch.countDocuments({ 
+      department: updatedDepartment._id,
+      isActive: true,
+      status: { $ne: 'discontinued' }
+    });
 
     res.json({
       success: true,
@@ -319,7 +328,11 @@ router.delete('/:id', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL), async (req, re
     }
 
     // Check if department has batches
-    const batchCount = await Batch.countDocuments({ department: id, status: 'active' });
+    const batchCount = await Batch.countDocuments({ 
+      department: id, 
+      isActive: true,
+      status: { $ne: 'discontinued' }
+    });
     if (batchCount > 0) {
       return res.status(400).json({
         success: false,
@@ -493,7 +506,11 @@ router.get('/sub-departments', auth, async (req, res) => {
       ]);
       const totalStudents = studentsFromModel + studentsFromAssignments;
       // Count all batches for this sub-department (regardless of status)
-      const totalBatches = await Batch.countDocuments({ subDepartment: subDept._id });
+      const totalBatches = await Batch.countDocuments({ 
+        subDepartment: subDept._id,
+        isActive: true,
+        status: { $ne: 'discontinued' }
+      });
       
       // Debug logging for first sub-department
       if (subDept.code && totalBatches > 0) {
@@ -731,7 +748,11 @@ router.delete('/:departmentId/sub-departments/:id', auth, async (req, res) => {
     }
 
     // Check if sub-department has batches
-    const batchCount = await Batch.countDocuments({ subDepartment: id, status: 'active' });
+    const batchCount = await Batch.countDocuments({ 
+      subDepartment: id, 
+      isActive: true,
+      status: { $ne: 'discontinued' }
+    });
     if (batchCount > 0) {
       return res.status(400).json({
         success: false,
@@ -768,6 +789,7 @@ router.post('/:departmentId/batches', auth, async (req, res) => {
       code, 
       subDepartmentId, 
       academicYear, 
+      standard,
       classTeacherId, 
       maxStudents = null // No limit by default 
     } = req.body;
@@ -837,6 +859,7 @@ router.post('/:departmentId/batches', auth, async (req, res) => {
       code: code.toUpperCase().trim(),
       department: departmentId,
       academicYear: academicYear.trim(),
+      standard: standard || null, // Standard field for classification
       maxStudents: maxStudents ? parseInt(maxStudents) : null // Optional, no limit if not provided
     };
     
@@ -988,6 +1011,7 @@ router.get('/batches', auth, async (req, res) => {
         department: batch.department,
         subDepartment: batch.subDepartment || null,
         academicYear: batch.academicYear,
+        standard: batch.standard || null,
         classTeacher: batch.classTeacher || null,
         maxStudents: batch.maxStudents,
         currentStudents: currentStudentCount,
@@ -1073,6 +1097,7 @@ router.get('/:departmentId/batches', auth, async (req, res) => {
         department: batch.department,
         subDepartment: batch.subDepartment,
         academicYear: batch.academicYear,
+        standard: batch.standard || null,
         classTeacher: batch.classTeacher,
         maxStudents: batch.maxStudents,
         currentStudents: batch.currentStudents || 0,
@@ -1104,7 +1129,7 @@ router.put('/:departmentId/batches/:id', auth, async (req, res) => {
       name, 
       code, 
       academicYear, 
-      currentSemester,
+      standard,
       subDepartmentId,
       classTeacherId, 
       maxStudents,
@@ -1192,7 +1217,7 @@ router.put('/:departmentId/batches/:id', auth, async (req, res) => {
     if (name) updateData.name = name.trim();
     if (code) updateData.code = code.toUpperCase().trim();
     if (academicYear) updateData.academicYear = academicYear.trim();
-    if (currentSemester !== undefined) updateData.currentSemester = parseInt(currentSemester) || 1;
+    if (standard !== undefined) updateData.standard = standard || null;
     if (maxStudents !== undefined) {
       updateData.maxStudents = maxStudents ? parseInt(maxStudents) : null; // null = unlimited
     }
@@ -1433,6 +1458,7 @@ router.get('/structure', auth, async (req, res) => {
             name: batch.name,
             code: batch.code,
             academicYear: batch.academicYear,
+            standard: batch.standard || null,
             classTeacher: batch.classTeacher,
             currentStudents: studentCount,
             currentStudentCount: studentCount, // Alias for compatibility

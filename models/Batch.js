@@ -26,6 +26,12 @@ const batchSchema = new mongoose.Schema({
     required: true,
     default: '2024-25'
   },
+  // Standard field for classification
+  standard: {
+    type: String,
+    enum: ['Pratham 1st Year', 'Pratham 2nd Year', 'Pratham 3rd Year', 'Pravesh 1st Year', 'Pravesh 2nd Year', 'Moola 1st Year', 'Moola 2nd Year', 'B.A. 1st Year', 'B.A. 2nd Year', 'B.A. 3rd Year', 'M.A. 1st Year', 'M.A. 2nd Year'],
+    default: null
+  },
   startDate: {
     type: Date,
     default: Date.now

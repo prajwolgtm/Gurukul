@@ -47,7 +47,7 @@ const ExamSchema = new mongoose.Schema({
   // Student Selection Criteria
   selectionType: {
     type: String,
-    enum: ['department', 'subDepartment', 'batch', 'standard', 'custom'],
+    enum: ['department', 'departmentStandard', 'subDepartment', 'batch', 'standard', 'custom'],
     required: true
   },
 
@@ -72,6 +72,11 @@ const ExamSchema = new mongoose.Schema({
     type: String,
     enum: ['Pratham 1st Year', 'Pratham 2nd Year', 'Pratham 3rd Year', 'Pravesh 1st Year', 'Pravesh 2nd Year', 'Moola 1st Year', 'Moola 2nd Year', 'B.A. 1st Year', 'B.A. 2nd Year', 'B.A. 3rd Year', 'M.A. 1st Year', 'M.A. 2nd Year']
   }],
+  // For department + single standard selection
+  targetDepartmentStandard: {
+    type: String,
+    enum: ['Pratham 1st Year', 'Pratham 2nd Year', 'Pratham 3rd Year', 'Pravesh 1st Year', 'Pravesh 2nd Year', 'Moola 1st Year', 'Moola 2nd Year', 'B.A. 1st Year', 'B.A. 2nd Year', 'B.A. 3rd Year', 'M.A. 1st Year', 'M.A. 2nd Year']
+  },
   customStudents: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Student'
@@ -163,6 +168,12 @@ const ExamSchema = new mongoose.Schema({
     type: String,
     enum: ['1', '2', 'annual'],
     default: '1'
+  },
+  // Standard field for classification (not linked to student selection)
+  standard: {
+    type: String,
+    enum: ['Pratham 1st Year', 'Pratham 2nd Year', 'Pratham 3rd Year', 'Pravesh 1st Year', 'Pravesh 2nd Year', 'Moola 1st Year', 'Moola 2nd Year', 'B.A. 1st Year', 'B.A. 2nd Year', 'B.A. 3rd Year', 'M.A. 1st Year', 'M.A. 2nd Year'],
+    default: null
   },
 
   // Created By
