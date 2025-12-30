@@ -93,6 +93,9 @@ router.post('/mark', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROL
     const attendanceDate = new Date(date);
     attendanceDate.setHours(0, 0, 0, 0);
     
+    console.log(`🔍 Checking for existing attendance on date: ${date} -> ${attendanceDate.toISOString()}`);
+    console.log(`🔍 Query range: ${new Date(attendanceDate).toISOString()} to ${new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000).toISOString()}`);
+    
     const existingAttendance = await ClassAttendance.findOne({
       subjectClass: classId,
       sessionDate: {
@@ -101,6 +104,11 @@ router.post('/mark', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROL
       },
       isDeleted: false
     });
+    
+    console.log(`${existingAttendance ? '✅ Found existing attendance' : '❌ No existing attendance found'}`);
+    if (existingAttendance) {
+      console.log(`📄 Existing sessionId: ${existingAttendance.sessionId}, sessionDate: ${existingAttendance.sessionDate.toISOString()}`);
+    }
 
     // If attendance exists, update it instead of creating new one
     if (existingAttendance) {
@@ -127,6 +135,7 @@ router.post('/mark', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROL
       if (attendanceType === 'normal' && attendanceData && Array.isArray(attendanceData)) {
         // Get all active students from class
         const activeStudents = subjectClass.students.filter(s => s.status === 'active' || !s.status);
+        console.log(`👥 Active students in class: ${activeStudents.length}`);
         
         // Build new attendance array - completely replace it
         const updatedAttendance = [];
@@ -144,11 +153,13 @@ router.post('/mark', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROL
             return attStudentId === studentId?.toString();
           });
           
+          const finalStatus = studentAttendance?.status || existingRecord?.status || 'absent';
+          
           if (existingRecord) {
             // Update existing record - create new object to ensure Mongoose detects change
             updatedAttendance.push({
               student: studentId,
-              status: studentAttendance?.status || existingRecord.status,
+              status: finalStatus,
               markedAt: new Date(),
               markedBy: req.user.id,
               participation: existingRecord.participation || 'average',
@@ -158,12 +169,19 @@ router.post('/mark', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROL
             // Create new record
             updatedAttendance.push({
               student: studentId,
-              status: studentAttendance?.status || 'absent',
+              status: finalStatus,
               markedAt: new Date(),
               markedBy: req.user.id,
               participation: 'average'
             });
           }
+        });
+        
+        console.log(`📊 Updated attendance records: ${updatedAttendance.length}`);
+        console.log(`📊 Status breakdown:`, {
+          present: updatedAttendance.filter(a => a.status === 'present').length,
+          absent: updatedAttendance.filter(a => a.status === 'absent').length,
+          late: updatedAttendance.filter(a => a.status === 'late').length
         });
         
         // Replace the entire attendance array - this ensures Mongoose detects the change
@@ -404,8 +422,19 @@ router.get('/class/:classId', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINC
 
     if (startDate || endDate) {
       query.sessionDate = {};
-      if (startDate) query.sessionDate.$gte = new Date(startDate);
-      if (endDate) query.sessionDate.$lte = new Date(endDate);
+      if (startDate) {
+        // Start of the day - append T00:00:00 to treat as local time, then convert to Date
+        // This ensures we match dates regardless of time component in stored sessionDate
+        const start = new Date(startDate + 'T00:00:00');
+        query.sessionDate.$gte = start;
+        console.log(`📅 Query startDate: ${startDate} -> ${start.toISOString()}`);
+      }
+      if (endDate) {
+        // End of the day - append T23:59:59.999 to cover entire day
+        const end = new Date(endDate + 'T23:59:59.999');
+        query.sessionDate.$lte = end;
+        console.log(`📅 Query endDate: ${endDate} -> ${end.toISOString()}`);
+      }
     }
 
     // Get attendance records
@@ -419,7 +448,27 @@ router.get('/class/:classId', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINC
       ]
     };
 
+    console.log(`\n🔍 ===== FETCHING ATTENDANCE =====`);
+    console.log(`📊 Class ID: ${req.params.classId}`);
+    console.log(`📅 Date range: ${startDate || 'none'} to ${endDate || 'none'}`);
+    console.log(`📊 Query:`, JSON.stringify(query, null, 2));
+    
     const attendanceRecords = await ClassAttendance.paginate(query, options);
+    
+    console.log(`📊 Found ${attendanceRecords.docs?.length || 0} attendance records`);
+    if (attendanceRecords.docs && attendanceRecords.docs.length > 0) {
+      attendanceRecords.docs.forEach(record => {
+        console.log(`  📄 Record: ${record.sessionDate.toISOString()} | Status: ${record.sessionStatus} | Students: ${record.attendance?.length || 0}`);
+        if (record.attendance && record.attendance.length > 0) {
+          const statusBreakdown = {
+            present: record.attendance.filter(a => a.status === 'present').length,
+            absent: record.attendance.filter(a => a.status === 'absent').length,
+            late: record.attendance.filter(a => a.status === 'late').length
+          };
+          console.log(`    📊 Breakdown:`, statusBreakdown);
+        }
+      });
+    }
 
     // Calculate statistics
     const allRecords = await ClassAttendance.find({
@@ -480,8 +529,18 @@ router.get('/student/:studentId', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.P
 
     if (startDate || endDate) {
       query.sessionDate = {};
-      if (startDate) query.sessionDate.$gte = new Date(startDate);
-      if (endDate) query.sessionDate.$lte = new Date(endDate);
+      if (startDate) {
+        // Start of the day - append T00:00:00 to treat as local time
+        const start = new Date(startDate + 'T00:00:00');
+        query.sessionDate.$gte = start;
+        console.log(`📅 Student query startDate: ${startDate} -> ${start.toISOString()}`);
+      }
+      if (endDate) {
+        // End of the day - append T23:59:59.999 to cover entire day
+        const end = new Date(endDate + 'T23:59:59.999');
+        query.sessionDate.$lte = end;
+        console.log(`📅 Student query endDate: ${endDate} -> ${end.toISOString()}`);
+      }
     }
 
     // Get attendance records
