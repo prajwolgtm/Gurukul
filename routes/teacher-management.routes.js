@@ -186,16 +186,30 @@ router.post('/', auth, async (req, res) => {
     const teacher = new Teacher({
       user: user._id,
       employeeId,
+      motherName,
+      spouseName,
+      dateOfBirth,
+      religion,
+      category,
+      nationality,
+      languages: languages || [],
       qualification,
       specialization,
+      veda,
+      shakha,
+      educationalBackground,
       experience,
       joiningDate,
       departments: departments || [],
       subDepartments: subDepartments || [],
       batches: batches || [],
       subjects: subjects || [],
+      permanentAddress,
       address,
       emergencyContact,
+      aadhaarNumber,
+      panNumber,
+      bankDetails,
       remarks,
       isVerified: true, // Auto-verified, can login immediately
       verifiedBy: req.user.id,
@@ -253,9 +267,12 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     const {
-      fullName, phone, employeeId, qualification, specialization, experience,
+      fullName, phone, employeeId,
+      motherName, spouseName, dateOfBirth, religion, category, nationality, languages,
+      qualification, specialization, veda, shakha, educationalBackground, experience,
       joiningDate, departments, subDepartments, batches,
-      subjects, address, emergencyContact, remarks, status
+      subjects, permanentAddress, address, emergencyContact,
+      aadhaarNumber, panNumber, bankDetails, remarks, status
     } = req.body;
 
     // Update user account
@@ -267,23 +284,41 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     // Update teacher profile
+    const updateData = {
+      ...(employeeId && { employeeId }),
+      ...(motherName !== undefined && { motherName }),
+      ...(spouseName !== undefined && { spouseName }),
+      ...(dateOfBirth !== undefined && { dateOfBirth }),
+      ...(religion !== undefined && { religion }),
+      ...(category !== undefined && { category }),
+      ...(nationality !== undefined && { nationality }),
+      ...(languages !== undefined && { languages }),
+      ...(qualification !== undefined && { qualification }),
+      ...(specialization !== undefined && { specialization }),
+      ...(veda !== undefined && { veda }),
+      ...(shakha !== undefined && { shakha }),
+      ...(educationalBackground !== undefined && { educationalBackground }),
+      ...(experience !== undefined && { experience }),
+      ...(joiningDate !== undefined && { joiningDate }),
+      ...(permanentAddress !== undefined && { permanentAddress }),
+      ...(address !== undefined && { address }),
+      ...(emergencyContact !== undefined && { emergencyContact }),
+      ...(aadhaarNumber !== undefined && { aadhaarNumber }),
+      ...(panNumber !== undefined && { panNumber }),
+      ...(bankDetails !== undefined && { bankDetails }),
+      ...(remarks !== undefined && { remarks }),
+      ...(status && { status })
+    };
+    
+    // Only update arrays if provided
+    if (departments !== undefined) updateData.departments = departments || teacher.departments;
+    if (subDepartments !== undefined) updateData.subDepartments = subDepartments || teacher.subDepartments;
+    if (batches !== undefined) updateData.batches = batches || teacher.batches;
+    if (subjects !== undefined) updateData.subjects = subjects || teacher.subjects;
+    
     const updatedTeacher = await Teacher.findByIdAndUpdate(
       req.params.id,
-      {
-        ...(employeeId && { employeeId }),
-        qualification,
-        specialization,
-        experience,
-        joiningDate,
-        departments: departments || teacher.departments,
-        subDepartments: subDepartments || teacher.subDepartments,
-        batches: batches || teacher.batches,
-        subjects: subjects || teacher.subjects,
-        address,
-        emergencyContact,
-        remarks,
-        ...(status && { status })
-      },
+      updateData,
       { new: true, runValidators: true }
     ).populate([
       { path: 'user', select: 'fullName email phone role isActive' },

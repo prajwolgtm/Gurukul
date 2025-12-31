@@ -175,6 +175,26 @@ const StudentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  
+  // Bank & Government IDs
+  aadhaarNumber: {
+    type: String,
+    trim: true,
+    sparse: true
+  },
+  panNumber: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    sparse: true
+  },
+  bankDetails: {
+    bankName: String,
+    bankAddress: String,
+    accountNumber: String,
+    ifscCode: String,
+    accountHolderName: String
+  },
 
   // Health Information
   latestHealth: {

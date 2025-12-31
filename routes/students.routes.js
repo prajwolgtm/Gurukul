@@ -465,8 +465,18 @@ router.put('/:id', auth, async (req, res) => {
       shaakha,
       gothra,
       status,
-      remarks
+      remarks,
+      aadhaarNumber,
+      panNumber,
+      bankDetails
     } = req.body;
+
+    console.log('🔍 Updating student:', req.params.id);
+    console.log('📝 Bank/ID fields received:', {
+      aadhaarNumber,
+      panNumber,
+      bankDetails
+    });
 
     // Check if admission number is being changed and if it already exists
     if (admissionNo && admissionNo !== student.admissionNo) {
@@ -513,8 +523,18 @@ router.put('/:id', auth, async (req, res) => {
       shaakha: shaakha || student.shaakha,
       gothra: gothra || student.gothra,
       status: status || student.status,
-      remarks: remarks !== undefined ? remarks : student.remarks
+      remarks: remarks !== undefined ? remarks : student.remarks,
+      // Bank & Government IDs (optional)
+      ...(aadhaarNumber !== undefined && { aadhaarNumber }),
+      ...(panNumber !== undefined && { panNumber }),
+      ...(bankDetails !== undefined && { bankDetails })
     };
+
+    console.log('💾 Update fields:', {
+      aadhaarNumber: updateFields.aadhaarNumber,
+      panNumber: updateFields.panNumber,
+      bankDetails: updateFields.bankDetails
+    });
 
     const updatedStudent = await Student.findByIdAndUpdate(
       req.params.id,
@@ -525,6 +545,12 @@ router.put('/:id', auth, async (req, res) => {
       { path: 'subDepartments', select: 'name code' },
       { path: 'batches', select: 'name code academicYear' }
     ]);
+
+    console.log('✅ Student updated. Bank/ID fields in DB:', {
+      aadhaarNumber: updatedStudent.aadhaarNumber,
+      panNumber: updatedStudent.panNumber,
+      bankDetails: updatedStudent.bankDetails
+    });
 
     res.json({
       success: true,

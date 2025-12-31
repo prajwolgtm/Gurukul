@@ -16,6 +16,39 @@ const teacherSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
+  
+  // Personal Information
+  motherName: {
+    type: String,
+    trim: true
+  },
+  spouseName: {
+    type: String,
+    trim: true
+  },
+  dateOfBirth: {
+    type: Date
+  },
+  religion: {
+    type: String,
+    trim: true
+  },
+  category: {
+    type: String,
+    enum: ['General', 'OBC', 'SC', 'ST', 'EWS', ''],
+    default: ''
+  },
+  nationality: {
+    type: String,
+    default: 'Indian',
+    trim: true
+  },
+  languages: [{
+    type: String,
+    trim: true
+  }],
+  
+  // Academic Information
   qualification: {
     type: String,
     trim: true
@@ -23,6 +56,19 @@ const teacherSchema = new mongoose.Schema({
   specialization: {
     type: String,
     trim: true
+  },
+  veda: {
+    type: String,
+    trim: true
+  },
+  shakha: {
+    type: String,
+    trim: true
+  },
+  educationalBackground: {
+    moolanta: String,
+    kramanta: String,
+    ghananta: String
   },
   experience: {
     type: Number, // in years
@@ -71,16 +117,42 @@ const teacherSchema = new mongoose.Schema({
     type: Date
   },
   
-  // Additional Information
+  // Address Information
+  permanentAddress: {
+    type: String,
+    trim: true
+  },
   address: {
     type: String,
     trim: true
   },
+  
+  // Emergency Contact
   emergencyContact: {
     name: String,
     phone: String,
     relation: String
   },
+  
+  // Bank & Government IDs
+  aadhaarNumber: {
+    type: String,
+    trim: true,
+    sparse: true // Allows null/undefined values while maintaining uniqueness for non-null values
+  },
+  panNumber: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    sparse: true
+  },
+  bankDetails: {
+    bankName: String,
+    bankAddress: String,
+    accountNumber: String,
+    ifscCode: String
+  },
+  
   remarks: {
     type: String,
     trim: true
