@@ -501,7 +501,7 @@ router.post('/users/create', auth, permit(ROLES.ADMIN), async (req, res) => {
     }
 
     // Validate role (exclude parent as it has special registration)
-    const allowedRoles = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.CARETAKER];
+    const allowedRoles = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY, ROLES.CARETAKER];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,

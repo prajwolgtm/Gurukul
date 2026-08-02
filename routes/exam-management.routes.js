@@ -14,6 +14,106 @@ import { getCurrentAcademicYear, getAcademicYearFromDate } from '../utils/academ
 
 const router = express.Router();
 
+const toArray = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return [value].filter(Boolean);
+};
+
+const buildExamStudentQuery = ({
+  selectionType,
+  department,
+  targetDepartment,
+  departments,
+  targetDepartments,
+  subDepartments,
+  targetSubDepartments,
+  batches,
+  targetBatches,
+  targetStandards,
+  targetDepartmentStandard,
+  customStudents,
+  search
+}) => {
+  const query = {
+    isActive: true,
+    status: 'active'
+  };
+
+  const departmentId = targetDepartment || department;
+  const departmentIds = toArray(targetDepartments || departments).filter(id => id !== '__all__');
+  const subDepartmentIds = toArray(targetSubDepartments || subDepartments);
+  const batchIds = toArray(targetBatches || batches);
+  const standards = toArray(targetStandards);
+
+  if (selectionType === 'department') {
+    if (departmentIds.length > 0) {
+      query.department = { $in: departmentIds };
+    } else if (departmentId) {
+      query.department = departmentId;
+    }
+  }
+
+  if (selectionType === 'departmentStandard') {
+    if (departmentId) query.department = departmentId;
+    if (targetDepartmentStandard) query.currentStandard = targetDepartmentStandard;
+  }
+
+  if (selectionType === 'subDepartment' && subDepartmentIds.length > 0) {
+    if (departmentId) query.department = departmentId;
+    query.subDepartments = { $in: subDepartmentIds };
+  }
+
+  if (selectionType === 'batch' && batchIds.length > 0) {
+    if (departmentId) query.department = departmentId;
+    query.batches = { $in: batchIds };
+  }
+
+  if (selectionType === 'standard' && standards.length > 0) {
+    query.currentStandard = { $in: standards };
+  }
+
+  if (selectionType === 'custom') {
+    query._id = { $in: toArray(customStudents) };
+  }
+
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    query.$and = query.$and || [];
+    query.$and.push({
+      $or: [
+        { fullName: searchRegex },
+        { admissionNo: searchRegex },
+        { studentId: searchRegex }
+      ]
+    });
+  }
+
+  return query;
+};
+
+const getStudentSelectFields = 'admissionNo fullName currentStandard department subDepartments batches status';
+
+const getUniqueStudentIdsFromCriteria = async (criteria = []) => {
+  const rules = toArray(criteria).filter(rule => rule && typeof rule === 'object');
+  if (rules.length === 0) return [];
+
+  const idSet = new Set();
+  for (const rule of rules) {
+    const query = buildExamStudentQuery(rule);
+    const students = await Student.find(query).select('_id').lean();
+    students.forEach(student => idSet.add(student._id.toString()));
+  }
+
+  return Array.from(idSet);
+};
+
+const resolveCustomStudentIds = async ({ customStudents, audienceCriteria }) => {
+  const manualIds = toArray(customStudents).map(student => student?._id || student).filter(Boolean);
+  const criteriaIds = await getUniqueStudentIdsFromCriteria(audienceCriteria);
+  return Array.from(new Set([...manualIds.map(String), ...criteriaIds.map(String)]));
+};
+
 // ==================== SUBJECTS ====================
 
 // @route   GET /api/exams/subjects
@@ -147,6 +247,45 @@ router.delete('/subjects/:id', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), asy
 
 // ==================== EXAMS ====================
 
+// @route   POST /api/exam-management/preview-students
+// @desc    Preview active students for an exam audience before creating it
+// @access  Private
+router.post('/preview-students', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.ADMIN), async (req, res) => {
+  try {
+    const { limit = 8 } = req.body;
+    const customIds = req.body.selectionType === 'custom'
+      ? await resolveCustomStudentIds({
+          customStudents: req.body.customStudents,
+          audienceCriteria: req.body.audienceCriteria
+        })
+      : [];
+    const query = req.body.selectionType === 'custom' && customIds.length > 0
+      ? buildExamStudentQuery({ ...req.body, customStudents: customIds })
+      : buildExamStudentQuery(req.body);
+    const totalStudents = await Student.countDocuments(query);
+    const students = await Student.find(query)
+      .select(getStudentSelectFields)
+      .populate('department', 'name code')
+      .populate('subDepartments', 'name code')
+      .populate('batches', 'name code academicYear')
+      .sort({ fullName: 1 })
+      .limit(Math.max(1, Math.min(parseInt(limit), 25)));
+
+    res.json({
+      success: true,
+      totalStudents,
+      students
+    });
+  } catch (error) {
+    console.error('Error previewing exam students:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error previewing exam students',
+      error: error.message
+    });
+  }
+});
+
 // @route   GET /api/exams
 // @desc    Get all exams with filtering
 // @access  Private
@@ -174,7 +313,12 @@ router.get('/', auth, async (req, res) => {
     // Build query
     let query = {};
 
-    if (department) query.targetDepartment = department;
+    if (department) {
+      query.$or = [
+        { targetDepartment: department },
+        { targetDepartments: department }
+      ];
+    }
     if (subDepartment) query.targetSubDepartments = subDepartment;
     if (batch) query.targetBatches = batch;
     if (status) query.status = status;
@@ -183,10 +327,13 @@ router.get('/', auth, async (req, res) => {
 
     // Add search functionality
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
-      ];
+      query.$and = query.$and || [];
+      query.$and.push({
+        $or: [
+          { name: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } }
+        ]
+      });
     }
 
     // Fetch all exams that match non-year filters
@@ -198,6 +345,7 @@ router.get('/', auth, async (req, res) => {
       .populate('targetBatches', 'name code academicYear')
       .populate('subjects.subject', 'name code')
       .populate('customStudents', 'admissionNo fullName')
+      .populate('invigilators', 'fullName email role')
       .populate('createdBy', 'fullName email')
       .sort({ examDate: -1 });
     console.log('📋 Raw exams found:', examsRaw.length);
@@ -261,6 +409,8 @@ router.get('/', auth, async (req, res) => {
             } else if (exam.targetDepartment) {
               studentQuery.department = exam.targetDepartment._id || exam.targetDepartment;
               count = await Student.countDocuments(studentQuery);
+            } else {
+              count = await Student.countDocuments(studentQuery);
             }
           } else if (exam.selectionType === 'subDepartment' && exam.targetSubDepartments.length > 0) {
             studentQuery.subDepartments = { $in: exam.targetSubDepartments.map(sd => sd._id || sd) };
@@ -318,6 +468,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('targetBatches', 'name code academicYear')
       .populate('subjects.subject', 'name code category')
       .populate('customStudents', 'admissionNo fullName')
+      .populate('invigilators', 'fullName email role')
       .populate('createdBy', 'fullName email');
 
     if (!exam) {
@@ -461,7 +612,7 @@ router.post('/', auth, async (req, res) => {
     const {
       title, name, description, examScope, selectionType, department, departments, targetDepartments, subDepartments, batches,
       targetStandards, targetDepartmentStandard, customStudents, subjects, examDate, startTime, endTime, duration, examType,
-      instructions, remarks, venue, useDivisions, divisions
+      instructions, remarks, venue, useDivisions, divisions, accessTeachers, invigilators, audienceCriteria
     } = req.body;
     
     // Support both single department and multiple departments
@@ -481,6 +632,9 @@ router.post('/', auth, async (req, res) => {
     // Use name if provided, otherwise use title (for backward compatibility)
     const examName = name || title;
     const examScopeValue = examScope || selectionType;
+    const resolvedCustomStudents = examScopeValue === 'custom'
+      ? await resolveCustomStudentIds({ customStudents, audienceCriteria })
+      : toArray(customStudents);
 
     // Validate required fields
     if (!examName || !examScopeValue || !examDate || !subjects || subjects.length === 0) {
@@ -540,7 +694,7 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
-    if (examScopeValue === 'custom' && (!customStudents || customStudents.length === 0)) {
+    if (examScopeValue === 'custom' && resolvedCustomStudents.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Custom students are required for custom scope'
@@ -623,7 +777,7 @@ router.post('/', auth, async (req, res) => {
       targetBatches: batches,
       targetStandards: examScopeValue === 'standard' ? targetStandards : undefined,
       targetDepartmentStandard: examScopeValue === 'departmentStandard' ? targetDepartmentStandard : undefined,
-      customStudents,
+      customStudents: examScopeValue === 'custom' ? resolvedCustomStudents : customStudents,
       subjects: formattedSubjects,
       examDate,
       startTime: startTime || '09:00',
@@ -633,6 +787,7 @@ router.post('/', auth, async (req, res) => {
       instructions,
       venue,
       remarks,
+      invigilators: toArray(accessTeachers || invigilators),
       academicYear: examDate ? getAcademicYearFromDate(new Date(examDate)) : getCurrentAcademicYear(),
       createdBy: userId
       // examId will be auto-generated by pre-save hook
@@ -651,6 +806,7 @@ router.post('/', auth, async (req, res) => {
       { path: 'targetSubDepartments', select: 'name code' },
       { path: 'targetBatches', select: 'name code academicYear' },
       { path: 'subjects.subject', select: 'name code' },
+      { path: 'invigilators', select: 'fullName email role' },
       { path: 'createdBy', select: 'fullName email' }
     ]);
 
@@ -707,13 +863,17 @@ router.put('/:id', auth, async (req, res) => {
     console.log('📝 Updating exam with data:', JSON.stringify(req.body, null, 2));
 
     const {
-      title, name, description, examScope, selectionType, department, subDepartments, batches,
+      title, name, description, examScope, selectionType, department, targetDepartment, subDepartments, batches,
       customStudents, subjects, examDate, startTime, endTime, duration, examType,
-      instructions, remarks, venue, status
+      instructions, remarks, venue, status, accessTeachers, invigilators, targetDepartments, departments,
+      targetStandards, targetDepartmentStandard, audienceCriteria
     } = req.body;
 
     const examName = name || title || existingExam.name;
     const examScopeValue = examScope || selectionType || existingExam.selectionType;
+    const resolvedCustomStudents = customStudents !== undefined || audienceCriteria !== undefined
+      ? await resolveCustomStudentIds({ customStudents, audienceCriteria })
+      : existingExam.customStudents;
 
     // Validate subjects if provided (allow partial update without subjects)
     let formattedSubjects = existingExam.subjects;
@@ -762,10 +922,13 @@ router.put('/:id', auth, async (req, res) => {
       name: examName,
       description,
       selectionType: examScopeValue,
-      targetDepartment: department,
+      targetDepartment: targetDepartment || department,
+      targetDepartments: examScopeValue === 'department' ? toArray(targetDepartments || departments).filter(d => d !== '__all__') : undefined,
       targetSubDepartments: subDepartments,
       targetBatches: batches,
-      customStudents,
+      targetStandards: examScopeValue === 'standard' ? targetStandards : undefined,
+      targetDepartmentStandard: examScopeValue === 'departmentStandard' ? targetDepartmentStandard : undefined,
+      customStudents: examScopeValue === 'custom' ? resolvedCustomStudents : customStudents,
       examDate,
       startTime,
       endTime,
@@ -774,6 +937,7 @@ router.put('/:id', auth, async (req, res) => {
       instructions,
       venue,
       remarks,
+      invigilators: accessTeachers !== undefined || invigilators !== undefined ? toArray(accessTeachers || invigilators) : existingExam.invigilators,
       status
     };
     
@@ -796,6 +960,7 @@ router.put('/:id', auth, async (req, res) => {
       { path: 'targetSubDepartments', select: 'name code' },
       { path: 'targetBatches', select: 'name code academicYear' },
       { path: 'subjects.subject', select: 'name code' },
+      { path: 'invigilators', select: 'fullName email role' },
       { path: 'createdBy', select: 'fullName email' }
     ]);
 

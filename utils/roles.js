@@ -5,6 +5,7 @@ export const ROLES = {
   HOD: 'HOD',
   TEACHER: 'Teacher',
   PARENT: 'Parent',
+  SECURITY: 'Security',
   CARETAKER: 'Caretaker', // Legacy role - kept for backward compatibility
   STUDENT: 'Student'
 };
@@ -15,6 +16,7 @@ export const ACCESS_LEVELS = {
   [ROLES.PRINCIPAL]: 9,
   [ROLES.HOD]: 7,
   [ROLES.TEACHER]: 5,
+  [ROLES.SECURITY]: 4,
   [ROLES.CARETAKER]: 4, // Legacy Hostel Coordinator role
   [ROLES.PARENT]: 2,
   [ROLES.STUDENT]: 1
@@ -38,6 +40,7 @@ export const ATTENDANCE_VIEWERS = new Set([
   ROLES.PRINCIPAL,
   ROLES.HOD,
   ROLES.TEACHER,
+  ROLES.SECURITY,
   ROLES.CARETAKER,
   ROLES.PARENT // Parents can view their child's attendance
 ]);
@@ -63,6 +66,7 @@ export const DISCIPLINARY_REPORTERS = new Set([
   ROLES.PRINCIPAL,
   ROLES.HOD,
   ROLES.TEACHER,
+  ROLES.SECURITY,
   ROLES.CARETAKER
 ]);
 

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import Student from '../models/Student.js';
 import { auth } from '../middleware/auth.js';
+import { permit } from '../middleware/rbac.js';
 import { ROLES } from '../utils/roles.js';
 
 const router = express.Router();
@@ -178,10 +179,10 @@ router.post('/register-parent', async (req, res) => {
   }
 });
 
-// @route   POST /api/auth/register-staff (DEVELOPMENT ONLY)
-// @desc    Register staff accounts for development/testing
-// @access  Public (REMOVE IN PRODUCTION)
-router.post('/register-staff', async (req, res) => {
+// @route   POST /api/auth/register-staff
+// @desc    Register staff accounts from admin panel only
+// @access  Private (Admin/Coordinator)
+router.post('/register-staff', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
   try {
     const { fullName, email, password, role } = req.body;
 
@@ -194,7 +195,7 @@ router.post('/register-staff', async (req, res) => {
     }
 
     // Validate role (exclude parent as it has special registration)
-    const allowedRoles = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.CARETAKER];
+    const allowedRoles = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY, ROLES.CARETAKER];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,
@@ -253,18 +254,19 @@ router.post('/register-staff', async (req, res) => {
 });
 
 // @route   POST /api/auth/login-parent
-// @desc    Parent login using email and child's DOB as password (format: DDMMYYYY)
+// @desc    Parent login using guardian email/phone and child's DOB as password (format: DDMMYYYY)
 // @access  Public
 router.post('/login-parent', async (req, res) => {
   try {
-    const { email, dob } = req.body; // dob in format DDMMYYYY (e.g., 16082002 for 16/08/2002)
+    const { email, contact, identifier, dob } = req.body; // dob in format DDMMYYYY (e.g., 16082002 for 16/08/2002)
+    const loginIdentifier = String(contact || identifier || email || '').trim();
 
-    console.log('🔐 Parent login attempt:', { email, dobLength: dob?.length });
+    console.log('🔐 Parent login attempt:', { identifier: loginIdentifier, dobLength: dob?.length });
 
-    if (!email || !dob) {
+    if (!loginIdentifier || !dob) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email and date of birth (DDMMYYYY format)'
+        message: 'Please provide parent phone/email and date of birth (DDMMYYYY format)'
       });
     }
 
@@ -276,26 +278,38 @@ router.post('/login-parent', async (req, res) => {
       });
     }
 
-    // Find student by guardian email ONLY (normalize email)
-    const normalizedEmail = email.toLowerCase().trim();
+    // Find student by guardian email or guardian phone.
+    const normalizedIdentifier = loginIdentifier.toLowerCase();
+    const normalizedPhone = loginIdentifier.replace(/\D/g, '');
+    const isEmailLogin = normalizedIdentifier.includes('@');
     
-    console.log('🔍 Searching for student with parent email:', normalizedEmail);
+    console.log('🔍 Searching for student with parent contact:', normalizedIdentifier);
     
-    // STRICT: Only allow login with guardianEmail (parent email), NOT student's own email
-    let student = await Student.findOne({ 
-      guardianEmail: normalizedEmail
-    }).populate('department', 'name code')
-      .populate('subDepartments', 'name code')
-      .populate('batches', 'name code');
+    // STRICT: Only allow login with guardianEmail/guardianPhone, NOT student's own email.
+    let student = null;
 
-    if (!student) {
+    if (isEmailLogin) {
+      student = await Student.findOne({
+        guardianEmail: normalizedIdentifier
+      }).populate('department', 'name code')
+        .populate('subDepartments', 'name code')
+        .populate('batches', 'name code');
+    } else if (normalizedPhone) {
+      student = await Student.findOne({
+        guardianPhone: { $regex: `${normalizedPhone}$` }
+      }).populate('department', 'name code')
+        .populate('subDepartments', 'name code')
+        .populate('batches', 'name code');
+    }
+
+    if (!student && isEmailLogin) {
       // Try case-insensitive search for guardianEmail only (in case of data inconsistency)
       const allStudents = await Student.find({ 
         guardianEmail: { $exists: true, $ne: '' } 
       }).select('guardianEmail fullName admissionNo');
       
       const matchingStudent = allStudents.find(s => 
-        s.guardianEmail && s.guardianEmail.toLowerCase().trim() === normalizedEmail
+        s.guardianEmail && s.guardianEmail.toLowerCase().trim() === normalizedIdentifier
       );
       
       if (matchingStudent) {
@@ -307,26 +321,48 @@ router.post('/login-parent', async (req, res) => {
       }
     }
 
+    if (!student && normalizedPhone) {
+      const allPhoneStudents = await Student.find({
+        guardianPhone: { $exists: true, $ne: '' }
+      }).select('guardianPhone fullName admissionNo');
+      const matchingStudent = allPhoneStudents.find(s => {
+        const storedPhone = String(s.guardianPhone || '').replace(/\D/g, '');
+        return storedPhone && (storedPhone === normalizedPhone || storedPhone.endsWith(normalizedPhone));
+      });
+
+      if (matchingStudent) {
+        student = await Student.findById(matchingStudent._id)
+          .populate('department', 'name code')
+          .populate('subDepartments', 'name code')
+          .populate('batches', 'name code');
+      }
+    }
+
     if (!student) {
-      console.log('❌ No student found for parent email:', normalizedEmail);
-      // Get sample emails for debugging (first 3 students with guardianEmail)
-      const sampleStudents = await Student.find({ guardianEmail: { $exists: true, $ne: '' } })
+      console.log('❌ No student found for parent contact:', normalizedIdentifier);
+      const sampleStudents = await Student.find({
+        $or: [
+          { guardianEmail: { $exists: true, $ne: '' } },
+          { guardianPhone: { $exists: true, $ne: '' } }
+        ]
+      })
         .limit(3)
-        .select('guardianEmail fullName admissionNo');
-      console.log('📋 Sample guardian emails in database:', sampleStudents.map(s => ({
+        .select('guardianEmail guardianPhone fullName admissionNo');
+      console.log('📋 Sample guardian contacts in database:', sampleStudents.map(s => ({
         email: s.guardianEmail,
+        phone: s.guardianPhone,
         name: s.fullName,
         admissionNo: s.admissionNo
       })));
       
       return res.status(404).json({
         success: false,
-        message: 'No student found with this parent email. Only parent emails (stored in "Parent Email" field) can be used for parent login. Student emails cannot be used.'
+        message: 'No student found with this parent phone/email. Please use the parent contact stored in the student record.'
       });
     }
 
     // SECURITY CHECK: Verify this is NOT a student's own email
-    if (student.email && student.email.toLowerCase().trim() === normalizedEmail) {
+    if (isEmailLogin && student.email && student.email.toLowerCase().trim() === normalizedIdentifier) {
       console.log('⚠️ SECURITY: Attempted login with student email instead of parent email');
       return res.status(403).json({
         success: false,
@@ -338,7 +374,8 @@ router.post('/login-parent', async (req, res) => {
       admissionNo: student.admissionNo, 
       fullName: student.fullName,
       hasDOB: !!student.dateOfBirth,
-      guardianEmail: student.guardianEmail
+      guardianEmail: student.guardianEmail,
+      guardianPhone: student.guardianPhone
     });
 
     // Check if student has dateOfBirth
@@ -369,14 +406,16 @@ router.post('/login-parent', async (req, res) => {
 
     // Find or create parent user account
     // Need password for bcrypt compare; select it explicitly
-    let parentUser = await User.findOne({ email: normalizedEmail }).select('+password');
+    const parentEmail = String(student.guardianEmail || '').toLowerCase().trim();
+    const syntheticParentEmail = parentEmail || `parent${student._id.toString()}@gurukul.edu`;
+    let parentUser = await User.findOne({ email: syntheticParentEmail }).select('+password');
     
     if (!parentUser) {
       console.log('📝 Creating new parent user account');
       // Create parent account with DOB as password
       parentUser = new User({
         fullName: student.fatherName || student.motherName || 'Parent',
-        email: normalizedEmail,
+        email: syntheticParentEmail,
         password: dob, // DOB as password (will be hashed by pre-save hook)
         role: ROLES.PARENT,
         phone: student.guardianPhone,

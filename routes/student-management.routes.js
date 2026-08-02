@@ -102,6 +102,239 @@ router.get('/departments', auth, async (req, res) => {
   }
 });
 
+// @route   POST /api/student-management/reference-import
+// @desc    Dry-run or apply reference workbook updates for existing students
+// @access  Private (Admin/Coordinator only)
+router.post('/reference-import', auth, async (req, res) => {
+  try {
+    const userRole = req.user.role;
+
+    if (![ROLES.ADMIN, ROLES.COORDINATOR].includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Admin or Coordinator can import reference student data'
+      });
+    }
+
+    const {
+      records = [],
+      dryRun = true,
+      onlyFillMissing = true,
+      updateStatusFromQuitRecords = false
+    } = req.body;
+
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide records array'
+      });
+    }
+
+    const normalizeAdmissionNo = (value = '') => String(value)
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/^0+(\d+\/)/, '$1')
+      .toLowerCase();
+
+    const cleanString = (value) => {
+      if (value === undefined || value === null) return '';
+      const text = String(value).replace(/\r\n/g, '\n').trim();
+      return ['-', '—', 'n/a', 'na', 'none', '#value!', '#ref!', '#n/a'].includes(text.toLowerCase()) ? '' : text;
+    };
+
+    const normalizeBloodGroup = (value) => {
+      const text = cleanString(value).toUpperCase().replace(/\s+/g, '');
+      const normalized = text
+        .replace('POSITIVE', '+')
+        .replace('NEGATIVE', '-')
+        .replace('+VE', '+')
+        .replace('-VE', '-');
+      const allowed = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+      return allowed.includes(normalized) ? normalized : '';
+    };
+
+    const parseDate = (value) => {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+
+    const phoneDigits = (value) => cleanString(value).replace(/\D/g, '');
+
+    const buildUpdate = (student, source) => {
+      const fieldMap = {
+        fullName: cleanString(source.fullName),
+        dateOfBirth: parseDate(source.dateOfBirth),
+        bloodGroup: normalizeBloodGroup(source.bloodGroup),
+        phone: cleanString(source.phone),
+        address: cleanString(source.address || source.presentAddress || source.permanentAddress),
+        presentAddress: cleanString(source.presentAddress),
+        permanentAddress: cleanString(source.permanentAddress),
+        fatherName: cleanString(source.fatherName || source.parentsName),
+        motherName: cleanString(source.motherName),
+        occupation: cleanString(source.occupation),
+        guardianPhone: cleanString(source.guardianPhone || source.phone),
+        nationality: cleanString(source.nationality),
+        religion: cleanString(source.religion),
+        caste: cleanString(source.caste),
+        motherTongue: cleanString(source.motherTongue),
+        lastSchoolAttended: cleanString(source.lastSchoolAttended),
+        lastStandardStudied: cleanString(source.lastStandardStudied),
+        tcDetails: cleanString(source.tcDetails),
+        admittedToStandard: cleanString(source.admittedToStandard),
+        currentStandard: cleanString(source.currentStandard),
+        dateOfAdmission: parseDate(source.dateOfAdmission),
+        shaakha: cleanString(source.shaakha),
+        gothra: cleanString(source.gothra),
+        remarks: cleanString(source.remarks)
+      };
+
+      if (updateStatusFromQuitRecords && source.sourceStatus === 'quit') {
+        fieldMap.status = 'leftout';
+        fieldMap.isActive = true;
+      }
+
+      const update = {};
+      const conflicts = [];
+
+      Object.entries(fieldMap).forEach(([field, sourceValue]) => {
+        if (sourceValue === '' || sourceValue === null || sourceValue === undefined) return;
+        const currentValue = student[field];
+        const currentText = currentValue instanceof Date
+          ? currentValue.toISOString().slice(0, 10)
+          : cleanString(currentValue);
+        const sourceText = sourceValue instanceof Date
+          ? sourceValue.toISOString().slice(0, 10)
+          : cleanString(sourceValue);
+        const currentDigits = phoneDigits(currentText);
+        const sourceDigits = phoneDigits(sourceText);
+        const sourceAddsKnownPhone = ['phone', 'guardianPhone'].includes(field) &&
+          currentDigits.length >= 6 &&
+          sourceDigits.includes(currentDigits) &&
+          sourceText.length > currentText.length;
+        const defaultNationalityNeedsCorrection = field === 'nationality' &&
+          currentText.toLowerCase() === 'indian' &&
+          ['nepal', 'nepali'].includes(sourceText.toLowerCase());
+        const missing = currentText === '' ||
+          (['dateOfBirth', 'dateOfAdmission'].includes(field) && currentText === '2025-12-22') ||
+          sourceAddsKnownPhone ||
+          defaultNationalityNeedsCorrection;
+
+        if (missing || !onlyFillMissing) {
+          if (!missing && currentText !== sourceText) {
+            conflicts.push({ field, current: currentText, source: sourceText });
+          }
+          update[field] = sourceValue;
+        } else if (currentText !== sourceText) {
+          conflicts.push({ field, current: currentText, source: sourceText });
+        }
+      });
+
+      return { update, conflicts };
+    };
+
+    const students = await Student.find({}).select('+admissionNo');
+    const byExactAdmission = new Map(students.map(student => [student.admissionNo, student]));
+    const byNormalizedAdmission = new Map(students.map(student => [normalizeAdmissionNo(student.admissionNo), student]));
+
+    const summary = {
+      received: records.length,
+      matched: 0,
+      unmatched: 0,
+      wouldUpdate: 0,
+      updated: 0,
+      unchanged: 0,
+      conflicts: 0,
+      errors: 0
+    };
+
+    const details = [];
+
+    for (const record of records) {
+      const admissionNo = cleanString(record.admissionNo);
+      if (!admissionNo) {
+        summary.unmatched += 1;
+        details.push({ admissionNo, fullName: record.fullName, status: 'skipped', reason: 'Missing admission number' });
+        continue;
+      }
+
+      const student = byExactAdmission.get(admissionNo) || byNormalizedAdmission.get(normalizeAdmissionNo(admissionNo));
+      if (!student) {
+        summary.unmatched += 1;
+        details.push({ admissionNo, fullName: record.fullName, status: 'unmatched', sourceSheet: record.sourceSheet });
+        continue;
+      }
+
+      summary.matched += 1;
+      const { update, conflicts } = buildUpdate(student, record);
+      const updateKeys = Object.keys(update);
+      summary.conflicts += conflicts.length;
+
+      if (updateKeys.length === 0) {
+        summary.unchanged += 1;
+        details.push({
+          admissionNo,
+          studentId: student._id,
+          fullName: student.fullName,
+          status: 'unchanged',
+          conflicts,
+          sourceSheet: record.sourceSheet
+        });
+        continue;
+      }
+
+      summary.wouldUpdate += 1;
+
+      if (!dryRun) {
+        try {
+          await Student.findByIdAndUpdate(student._id, update, { runValidators: true });
+          summary.updated += 1;
+        } catch (error) {
+          summary.errors += 1;
+          details.push({
+            admissionNo,
+            studentId: student._id,
+            fullName: student.fullName,
+            status: 'error',
+            error: error.message,
+            fields: updateKeys,
+            conflicts,
+            sourceSheet: record.sourceSheet
+          });
+          continue;
+        }
+      }
+
+      details.push({
+        admissionNo,
+        studentId: student._id,
+        fullName: student.fullName,
+        status: dryRun ? 'would-update' : 'updated',
+        fields: updateKeys,
+        conflicts,
+        sourceSheet: record.sourceSheet
+      });
+    }
+
+    return res.json({
+      success: true,
+      dryRun,
+      onlyFillMissing,
+      updateStatusFromQuitRecords,
+      summary,
+      details: details.slice(0, 250),
+      truncatedDetails: details.length > 250
+    });
+  } catch (error) {
+    console.error('Error importing student reference data:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error importing student reference data',
+      error: error.message
+    });
+  }
+});
+
 // @route   GET /api/students/:id
 // @desc    Get single student
 // @access  Private

@@ -294,7 +294,7 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     }
 
     // Validate role
-    const allowedRoles = [ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER];
+    const allowedRoles = [ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,
@@ -335,7 +335,7 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     // or stored in a separate profile/staff model
 
     // Auto-verify high-level roles and teachers
-    if ([ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER].includes(role)) {
+    if ([ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY].includes(role)) {
       userData.isVerified = true;
       userData.accountStatus = 'verified';
       userData.verifiedBy = req.user.id;
@@ -470,7 +470,7 @@ router.put('/update-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATO
     
     // Role changes require special handling
     if (role && role !== user.role) {
-      const allowedRoles = [ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER];
+      const allowedRoles = [ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY];
       if (!allowedRoles.includes(role)) {
         return res.status(400).json({
           success: false,

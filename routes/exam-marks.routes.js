@@ -444,6 +444,146 @@ router.post('/bulk', auth, async (req, res) => {
   }
 });
 
+// @route   POST /api/exam-marks/subject-bulk
+// @desc    Enter/update one subject's marks for many students
+// @access  Private (All except Parents)
+router.post('/subject-bulk', auth, async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    if (userRole === ROLES.PARENT) {
+      return res.status(403).json({
+        success: false,
+        message: 'Parents cannot enter exam marks'
+      });
+    }
+
+    const { examId, subjectId, marksRows = [] } = req.body;
+
+    if (!examId || !subjectId || !Array.isArray(marksRows)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Exam ID, subject ID, and marks rows are required'
+      });
+    }
+
+    const exam = await Exam.findById(examId).populate('subjects.subject', 'name code');
+    if (!exam) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam not found'
+      });
+    }
+
+    const examSubject = exam.subjects.find(s => (s.subject._id || s.subject).toString() === subjectId.toString());
+    if (!examSubject) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected subject is not part of this exam'
+      });
+    }
+
+    const activeRows = marksRows.filter(row => row.student && row.marksObtained !== '' && row.marksObtained !== null && row.marksObtained !== undefined);
+    const results = { success: [], errors: [], total: activeRows.length };
+
+    for (let i = 0; i < activeRows.length; i++) {
+      const row = activeRows[i];
+      try {
+        const marksObtained = Number(row.marksObtained);
+        const maxMarks = Number(examSubject.maxMarks || 100);
+
+        if (Number.isNaN(marksObtained) || marksObtained < 0 || marksObtained > maxMarks) {
+          results.errors.push({
+            row: i + 1,
+            student: row.student,
+            error: `Marks must be between 0 and ${maxMarks}`
+          });
+          continue;
+        }
+
+        let examMarks = await ExamMarks.findOne({ exam: examId, student: row.student });
+        const initializedSubjectMarks = exam.subjects.map(subjectConfig => ({
+          subject: subjectConfig.subject._id || subjectConfig.subject,
+          marksObtained: 0,
+          maxMarks: subjectConfig.maxMarks || 100,
+          passingMarks: subjectConfig.passingMarks || 40,
+          useDivisions: subjectConfig.useDivisions || false,
+          divisionMarks: subjectConfig.useDivisions
+            ? (subjectConfig.divisions || []).map(div => ({
+                divisionName: div.name,
+                marksObtained: 0,
+                maxMarks: div.maxMarks || 10
+              }))
+            : []
+        }));
+
+        if (!examMarks) {
+          examMarks = new ExamMarks({
+            exam: examId,
+            student: row.student,
+            subjectMarks: initializedSubjectMarks,
+            totalMarksObtained: 0,
+            totalMaxMarks: initializedSubjectMarks.reduce((sum, mark) => sum + mark.maxMarks, 0),
+            isPresent: row.isPresent !== false,
+            enteredBy: userId,
+            status: 'submitted'
+          });
+        }
+
+        const subjectIndex = examMarks.subjectMarks.findIndex(mark => mark.subject.toString() === subjectId.toString());
+        const subjectMark = {
+          subject: subjectId,
+          marksObtained,
+          maxMarks,
+          passingMarks: examSubject.passingMarks || 40,
+          useDivisions: examSubject.useDivisions || false,
+          remarks: row.remarks || undefined
+        };
+
+        if (subjectIndex >= 0) {
+          const existingSubjectMark = examMarks.subjectMarks[subjectIndex].toObject?.() || examMarks.subjectMarks[subjectIndex];
+          examMarks.subjectMarks[subjectIndex] = { ...existingSubjectMark, ...subjectMark };
+        } else {
+          examMarks.subjectMarks.push(subjectMark);
+        }
+
+        examMarks.enteredBy = userId;
+        examMarks.status = 'submitted';
+        examMarks.isPresent = row.isPresent !== false;
+        examMarks.teacherRemarks = row.teacherRemarks || examMarks.teacherRemarks;
+
+        await examMarks.save();
+
+        results.success.push({
+          row: i + 1,
+          student: row.student,
+          marksObtained
+        });
+      } catch (error) {
+        results.errors.push({
+          row: i + 1,
+          student: row.student,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Subject marks saved for ${results.success.length} student(s).`,
+      results
+    });
+  } catch (error) {
+    console.error('❌ Error in subject-wise bulk marks entry:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error in subject-wise bulk marks entry',
+      error: error.message
+    });
+  }
+});
+
 // @route   PUT /api/exam-marks/:id/verify
 // @desc    Verify exam marks
 // @access  Private (Admin/Coordinator/Principal)

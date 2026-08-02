@@ -79,11 +79,21 @@ const formatStudentInfo = (student) => ({
     phone: student.phone,
     email: student.email,
     address: student.address,
-    guardianPhone: student.guardianPhone
+    presentAddress: student.presentAddress,
+    permanentAddress: student.permanentAddress,
+    guardianPhone: student.guardianPhone,
+    guardianEmail: student.guardianEmail
   },
   family: {
     fatherName: student.fatherName,
-    motherName: student.motherName
+    motherName: student.motherName,
+    occupation: student.occupation
+  },
+  demographics: {
+    nationality: student.nationality,
+    religion: student.religion,
+    caste: student.caste,
+    motherTongue: student.motherTongue
   },
   academic: {
     department: student.department,
@@ -91,7 +101,10 @@ const formatStudentInfo = (student) => ({
     batches: student.batches,
     admittedToStandard: student.admittedToStandard,
     currentStandard: student.currentStandard,
-    dateOfAdmission: student.dateOfAdmission
+    dateOfAdmission: student.dateOfAdmission,
+    lastSchoolAttended: student.lastSchoolAttended,
+    lastStandardStudied: student.lastStandardStudied,
+    tcDetails: student.tcDetails
   },
   vedic: {
     shaakha: student.shaakha,
@@ -842,4 +855,3 @@ router.delete('/:studentId/notes/:noteId', auth, permit(...NOTE_DELETE_ROLES), a
 });
 
 export default router;
-

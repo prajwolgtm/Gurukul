@@ -718,7 +718,11 @@ router.get('/report/daily/:date/pdf', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL,
     const activeStudents = await Student.find({
       isActive: true,
       status: 'active'
-    }).select('_id fullName admissionNo').lean();
+    })
+      .select('_id fullName admissionNo department subDepartments')
+      .populate('department', 'name code')
+      .populate('subDepartments', 'name code')
+      .lean();
     
     // Get attendance records for the date
     const attendanceRecords = await DailyAttendance.find({
@@ -752,7 +756,9 @@ router.get('/report/daily/:date/pdf', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL,
           student: {
             _id: student._id,
             fullName: student.fullName,
-            admissionNo: student.admissionNo
+            admissionNo: student.admissionNo,
+            department: student.department,
+            subDepartments: student.subDepartments
           }
         };
       } else {
@@ -762,7 +768,9 @@ router.get('/report/daily/:date/pdf', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL,
           student: {
             _id: student._id,
             fullName: student.fullName,
-            admissionNo: student.admissionNo
+            admissionNo: student.admissionNo,
+            department: student.department,
+            subDepartments: student.subDepartments
           },
           sessions: {},
           statistics: {
@@ -913,11 +921,41 @@ router.get('/report/daily/:date/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPA
       sessions = await AttendanceSession.initializeDefaults();
     }
     
-    // Prepare Excel data
+    const statusCode = (status = 'Present') => ({
+      Present: 'P',
+      Absent: 'A',
+      Sick: 'S',
+      Leave: 'L'
+    })[status] || 'P';
+
+    const studentVedaLabel = (student = {}) => {
+      const department = student.department?.name || '';
+      const subDepartments = Array.isArray(student.subDepartments)
+        ? student.subDepartments.map(sub => sub?.name).filter(Boolean).join(', ')
+        : '';
+      return [department, subDepartments].filter(Boolean).join(' - ') || 'N/A';
+    };
+
+    // Prepare Excel data in the Gurukul reference format.
     const excelData = [];
-    
-    // Header row
-    const headerRow = ['S.No', 'Admission No', 'Student Name', ...sessions.map(s => s.displayNames.english || s.sessionKey), 'Present', 'Absent', 'Sick', 'Leave', 'Attendance %', 'Overall Status'];
+
+    excelData.push([`Veda Student's Attendance - ${date}`]);
+    excelData.push(['Legend: P = Present, A = Absent, S = Sick, L = Leave']);
+    excelData.push([]);
+
+    const headerRow = [
+      'S.No',
+      'Admission No',
+      'Student Name',
+      'Veda / Shakha',
+      ...sessions.map(s => s.displayNames.sanskrit || s.displayNames.hindi || s.displayNames.english || s.sessionKey),
+      'P',
+      'A',
+      'S',
+      'L',
+      'Attendance %',
+      'Overall Status'
+    ];
     excelData.push(headerRow);
     
     // Data rows
@@ -927,7 +965,8 @@ router.get('/report/daily/:date/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPA
         index + 1,
         student.admissionNo || 'N/A',
         student.fullName || 'Unknown',
-        ...sessions.map(session => record.sessions?.[session.sessionKey]?.status || 'Present'),
+        studentVedaLabel(student),
+        ...sessions.map(session => statusCode(record.sessions?.[session.sessionKey]?.status || 'Present')),
         record.statistics?.presentCount || 0,
         record.statistics?.absentCount || 0,
         record.statistics?.sickCount || 0,
@@ -947,7 +986,8 @@ router.get('/report/daily/:date/excel', auth, permit(ROLES.ADMIN, ROLES.PRINCIPA
       { wch: 8 }, // S.No
       { wch: 15 }, // Admission No
       { wch: 25 }, // Student Name
-      ...sessions.map(() => ({ wch: 12 })), // Session columns
+      { wch: 28 }, // Veda / Shakha
+      ...sessions.map(() => ({ wch: 14 })), // Session columns
       { wch: 10 }, // Present
       { wch: 10 }, // Absent
       { wch: 10 }, // Sick

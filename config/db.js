@@ -20,6 +20,7 @@ export const connectDB = async (retries = 5) => {
         autoIndex: true,
         serverSelectionTimeoutMS: 5000,
         socketTimeoutMS: 45000,
+        family: 4,
       });
       
       console.log('🗄️  MongoDB connected successfully!');

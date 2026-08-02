@@ -22,12 +22,12 @@ export async function generateQRPass(requestData, requestType) {
       validUntil.setDate(validUntil.getDate() + 1);
       validUntil.setHours(23, 59, 59, 999);
     } else if (requestType === 'visit') {
-      // Valid until approved end time + 2 hours buffer
+      // Valid until approved end time + 1 hour gate buffer
       const approvedDate = requestData.approvedDate || requestData.preferredDate;
       const endTime = requestData.approvedEndTime || requestData.preferredEndTime;
       validUntil = new Date(approvedDate);
       const [hours, minutes] = endTime.split(':').map(Number);
-      validUntil.setHours(hours + 2, minutes, 0, 0); // 2 hours buffer after visit end
+      validUntil.setHours(hours + 1, minutes, 0, 0);
     }
     
     // Create QR data payload

@@ -12,6 +12,26 @@ import { getAcademicYearFromDate, getAcademicYearDates } from '../utils/academic
 
 const router = express.Router();
 
+const GATE_ROLES = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.SECURITY, ROLES.CARETAKER];
+
+const buildDateTimeFromTime = (dateValue, timeValue) => {
+  if (!dateValue || !timeValue) return null;
+  const date = new Date(dateValue);
+  const [hours = 0, minutes = 0] = String(timeValue).split(':').map(Number);
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+};
+
+const getVisitGateWindow = (request) => {
+  const visitDate = request.approvedDate || request.preferredDate;
+  const startTime = request.approvedStartTime || request.preferredStartTime;
+  const endTime = request.approvedEndTime || request.preferredEndTime;
+  const startsAt = buildDateTimeFromTime(visitDate, startTime);
+  const endsAt = buildDateTimeFromTime(visitDate, endTime);
+  const lastEntryAt = endsAt ? new Date(endsAt.getTime() + 60 * 60 * 1000) : null;
+  return { startsAt, endsAt, lastEntryAt };
+};
+
 // ==================== LEAVE REQUESTS ====================
 
 // @route   POST /api/requests/leave
@@ -1160,9 +1180,9 @@ router.put('/visit/:id/review', auth, async (req, res) => {
             ? visitRequest.student.subDepartments.map(sd => sd._id || sd)
             : [];
           
-          if (activeSubDepartments?.length > 0) {
+          if (studentSubDeptIds?.length > 0) {
             const subDepartment = await SubDepartment.findOne({
-              _id: { $in: activeSubDepartments },
+              _id: { $in: studentSubDeptIds },
               coordinator: reviewerId
             });
             hasAuthority = !!subDepartment;
@@ -1594,10 +1614,129 @@ router.put('/visit/:id/cancel', auth, permit(ROLES.PARENT), async (req, res) => 
 
 // ==================== QR CODE VERIFICATION (SECURITY) ====================
 
+// @route   GET /api/requests/gate/inside-visitors
+// @desc    Current approved visitors checked in but not checked out
+// @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
+router.get('/gate/inside-visitors', auth, permit(...GATE_ROLES), async (req, res) => {
+  try {
+    const visitors = await VisitRequest.find({
+      status: { $in: ['approved', 'completed'] },
+      'qrPass.entryTime': { $ne: null },
+      $or: [
+        { 'qrPass.exitTime': null },
+        { 'qrPass.exitTime': { $exists: false } }
+      ]
+    })
+      .populate('student', 'fullName admissionNo')
+      .populate('requestedBy', 'fullName email phone')
+      .populate('personToMeet', 'fullName role')
+      .sort({ 'qrPass.entryTime': -1 });
+
+    res.json({
+      success: true,
+      data: visitors.map(request => ({
+        id: request._id,
+        requestId: request.requestId,
+        parent: {
+          name: request.requestedBy?.fullName,
+          email: request.requestedBy?.email,
+          phone: request.requestedBy?.phone
+        },
+        student: request.student ? {
+          name: request.student.fullName,
+          admissionNo: request.student.admissionNo
+        } : null,
+        visitType: request.visitType,
+        purpose: request.purpose,
+        approvedDate: request.approvedDate || request.preferredDate,
+        approvedStartTime: request.approvedStartTime || request.preferredStartTime,
+        approvedEndTime: request.approvedEndTime || request.preferredEndTime,
+        approvedVenue: request.approvedVenue,
+        entryTime: request.qrPass.entryTime,
+        personToMeet: request.personToMeet ? {
+          name: request.personToMeet.fullName,
+          role: request.personToMeet.role
+        } : null
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching inside visitors:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching inside visitors',
+      error: error.message
+    });
+  }
+});
+
+// @route   PUT /api/requests/gate/visit/:id/checkout
+// @desc    Check out an inside visitor from the gate panel
+// @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
+router.put('/gate/visit/:id/checkout', auth, permit(...GATE_ROLES), async (req, res) => {
+  try {
+    const request = await VisitRequest.findById(req.params.id)
+      .populate('student', 'fullName admissionNo')
+      .populate('requestedBy', 'fullName email phone');
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Visit request not found'
+      });
+    }
+
+    if (!request.qrPass?.entryTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Visitor has not checked in yet'
+      });
+    }
+
+    if (request.qrPass?.exitTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Visitor has already checked out',
+        exitTime: request.qrPass.exitTime
+      });
+    }
+
+    const now = new Date();
+    request.qrPass.exitTime = now;
+    request.qrPass.usedBy = req.user.id;
+    request.checkOutTime = now;
+    await request.save();
+
+    res.json({
+      success: true,
+      message: 'Visitor checked out successfully',
+      request: {
+        requestId: request.requestId,
+        entryTime: request.qrPass.entryTime,
+        exitTime: request.qrPass.exitTime,
+        parent: {
+          name: request.requestedBy?.fullName,
+          phone: request.requestedBy?.phone
+        },
+        student: request.student ? {
+          name: request.student.fullName,
+          admissionNo: request.student.admissionNo
+        } : null
+      }
+    });
+  } catch (error) {
+    console.error('Error checking out visitor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking out visitor',
+      error: error.message
+    });
+  }
+});
+
 // @route   POST /api/requests/verify-qr
 // @desc    Verify QR code pass (Security/Admin)
-// @access  Private (Admin, Coordinator, Caretaker)
-router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CARETAKER), async (req, res) => {
+// @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
+router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
   try {
     const { qrData, action } = req.body; // action: 'entry' or 'exit'
     
@@ -1657,6 +1796,26 @@ router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CAR
     // Handle entry/exit for visit requests
     if (type === 'visit') {
       if (action === 'entry') {
+        const now = new Date();
+        const { startsAt, lastEntryAt } = getVisitGateWindow(request);
+        if (startsAt && now < startsAt) {
+          return res.status(400).json({
+            success: false,
+            message: `Entry is allowed only after ${startsAt.toLocaleString()}`,
+            valid: true,
+            tooEarly: true,
+            allowedFrom: startsAt
+          });
+        }
+        if (lastEntryAt && now > lastEntryAt) {
+          return res.status(400).json({
+            success: false,
+            message: `Entry window expired at ${lastEntryAt.toLocaleString()}`,
+            valid: false,
+            expiredWindow: true,
+            allowedUntil: lastEntryAt
+          });
+        }
         if (request.qrPass.entryTime) {
           return res.status(400).json({
             success: false,
@@ -1666,6 +1825,7 @@ router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CAR
           });
         }
         request.qrPass.entryTime = new Date();
+        request.qrPass.usedBy = req.user.id;
         request.checkInTime = new Date();
         await request.save();
       } else if (action === 'exit') {
@@ -1686,6 +1846,7 @@ router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CAR
           });
         }
         request.qrPass.exitTime = new Date();
+        request.qrPass.usedBy = req.user.id;
         request.checkOutTime = new Date();
         await request.save();
       }
@@ -1729,6 +1890,7 @@ router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CAR
         approvedVenue: request.approvedVenue,
         entryTime: request.qrPass.entryTime,
         exitTime: request.qrPass.exitTime,
+        gateWindow: getVisitGateWindow(request),
         personToMeet: request.personToMeet ? {
           name: request.personToMeet.fullName,
           role: request.personToMeet.role
@@ -1757,8 +1919,8 @@ router.post('/verify-qr', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CAR
 
 // @route   GET /api/requests/verify-qr/:requestId
 // @desc    Get QR pass details by request ID (for manual entry)
-// @access  Private (Admin, Coordinator, Caretaker)
-router.get('/verify-qr/:requestId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.CARETAKER), async (req, res) => {
+// @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
+router.get('/verify-qr/:requestId', auth, permit(...GATE_ROLES), async (req, res) => {
   try {
     const { requestId } = req.params;
     const { type } = req.query; // 'leave' or 'visit'
