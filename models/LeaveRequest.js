@@ -168,6 +168,49 @@ const LeaveRequestSchema = withTimestamps(new mongoose.Schema({
     usedBy: {
       type: oid,
       ref: 'User' // Security guard who scanned
+    },
+    entryTime: {
+      type: Date,
+      default: null
+    },
+    childExitApprovedAt: {
+      type: Date,
+      default: null
+    },
+    childExitApprovedBy: {
+      type: oid,
+      ref: 'User',
+      default: null
+    },
+    childOutTime: {
+      type: Date,
+      default: null
+    },
+    childReturnTime: {
+      type: Date,
+      default: null
+    },
+    exitTime: {
+      type: Date,
+      default: null
+    },
+    childExitPass: {
+      qrCode: { type: String, default: null },
+      qrData: { type: String, default: null },
+      passToken: { type: String, default: null },
+      generatedAt: { type: Date, default: null },
+      validUntil: { type: Date, default: null },
+      usedAt: { type: Date, default: null },
+      usedBy: { type: oid, ref: 'User', default: null }
+    },
+    childReturnPass: {
+      qrCode: { type: String, default: null },
+      qrData: { type: String, default: null },
+      passToken: { type: String, default: null },
+      generatedAt: { type: Date, default: null },
+      validUntil: { type: Date, default: null },
+      usedAt: { type: Date, default: null },
+      usedBy: { type: oid, ref: 'User', default: null }
     }
   }
 }));

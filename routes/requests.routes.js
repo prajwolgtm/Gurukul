@@ -25,6 +25,43 @@ const getVisitGateWindow = (request) => {
   return { startsAt, endsAt, lastEntryAt };
 };
 
+const getLeaveGateStatus = (request) => {
+  if (!request?.qrPass?.entryTime) return 'awaiting_parent_entry';
+  if (!request.qrPass.childExitApprovedAt) return 'parent_inside_waiting_child_exit_approval';
+  if (!request.qrPass.childOutTime) return 'child_exit_approved_waiting_scan';
+  if (!request.qrPass.childReturnTime) return 'student_on_leave';
+  return 'completed';
+};
+
+const getLeaveQrPassResponse = (qrPass) => {
+  if (!qrPass) return null;
+  return {
+    qrCode: qrPass.qrCode,
+    qrData: qrPass.qrData,
+    validUntil: qrPass.validUntil,
+    isUsed: qrPass.isUsed,
+    usedAt: qrPass.usedAt,
+    entryTime: qrPass.entryTime,
+    childExitApprovedAt: qrPass.childExitApprovedAt,
+    childOutTime: qrPass.childOutTime,
+    childReturnTime: qrPass.childReturnTime,
+    exitTime: qrPass.exitTime,
+    gateStatus: getLeaveGateStatus({ qrPass }),
+    childExitPass: qrPass.childExitPass?.qrData ? {
+      qrCode: qrPass.childExitPass.qrCode,
+      qrData: qrPass.childExitPass.qrData,
+      validUntil: qrPass.childExitPass.validUntil,
+      usedAt: qrPass.childExitPass.usedAt
+    } : null,
+    childReturnPass: qrPass.childReturnPass?.qrData ? {
+      qrCode: qrPass.childReturnPass.qrCode,
+      qrData: qrPass.childReturnPass.qrData,
+      validUntil: qrPass.childReturnPass.validUntil,
+      usedAt: qrPass.childReturnPass.usedAt
+    } : null
+  };
+};
+
 // ==================== LEAVE REQUESTS ====================
 
 // @route   POST /api/requests/leave
@@ -337,13 +374,7 @@ router.get('/leave', auth, async (req, res) => {
           reviewComments: req.reviewComments,
           isOverdue: req.isOverdue,
           isActive: req.isActive,
-          qrPass: req.qrPass ? {
-            qrCode: req.qrPass.qrCode,
-            qrData: req.qrPass.qrData,
-            validUntil: req.qrPass.validUntil,
-            isUsed: req.qrPass.isUsed,
-            usedAt: req.qrPass.usedAt
-          } : null,
+          qrPass: getLeaveQrPassResponse(req.qrPass),
           createdAt: req.createdAt
         })),
         pagination: {
@@ -388,13 +419,7 @@ router.get('/leave', auth, async (req, res) => {
         reviewComments: req.reviewComments,
         isOverdue: req.isOverdue,
         isActive: req.isActive,
-        qrPass: req.qrPass ? {
-          qrCode: req.qrPass.qrCode,
-          qrData: req.qrPass.qrData,
-          validUntil: req.qrPass.validUntil,
-          isUsed: req.qrPass.isUsed,
-          usedAt: req.qrPass.usedAt
-        } : null,
+        qrPass: getLeaveQrPassResponse(req.qrPass),
         createdAt: req.createdAt
       })),
       pagination: {
@@ -1625,11 +1650,44 @@ router.get('/gate/inside-visitors', auth, permit(...GATE_ROLES), async (req, res
       .populate('personToMeet', 'fullName role')
       .sort({ 'qrPass.entryTime': -1 });
 
+    const leaveParents = await LeaveRequest.find({
+      status: 'approved',
+      'qrPass.entryTime': { $ne: null },
+      'qrPass.childOutTime': null
+    })
+      .populate('student', 'fullName admissionNo')
+      .populate('requestedBy', 'fullName email phone')
+      .sort({ 'qrPass.entryTime': -1 });
+
     res.json({
       success: true,
-      data: visitors.map(request => ({
+      data: [
+        ...leaveParents.map(request => ({
+          id: request._id,
+          requestId: request.requestId,
+          type: 'leave',
+          gateStatus: getLeaveGateStatus(request),
+          parent: {
+            name: request.requestedBy?.fullName,
+            email: request.requestedBy?.email,
+            phone: request.requestedBy?.phone
+          },
+          student: request.student ? {
+            name: request.student.fullName,
+            admissionNo: request.student.admissionNo
+          } : null,
+          leaveType: request.leaveType,
+          purpose: request.reason,
+          startDate: request.startDate,
+          endDate: request.endDate,
+          entryTime: request.qrPass.entryTime,
+          childExitApprovedAt: request.qrPass.childExitApprovedAt
+        })),
+        ...visitors.map(request => ({
         id: request._id,
         requestId: request.requestId,
+        type: 'visit',
+        gateStatus: 'visitor_inside',
         parent: {
           name: request.requestedBy?.fullName,
           email: request.requestedBy?.email,
@@ -1651,6 +1709,7 @@ router.get('/gate/inside-visitors', auth, permit(...GATE_ROLES), async (req, res
           role: request.personToMeet.role
         } : null
       }))
+      ]
     });
   } catch (error) {
     console.error('Error fetching inside visitors:', error);
@@ -1726,6 +1785,82 @@ router.put('/gate/visit/:id/checkout', auth, permit(...GATE_ROLES), async (req, 
   }
 });
 
+// @route   PUT /api/requests/gate/leave/:id/approve-child-exit
+// @desc    Approve the child outgoing pass after parent has entered the gate
+// @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
+router.put('/gate/leave/:id/approve-child-exit', auth, permit(...GATE_ROLES), async (req, res) => {
+  try {
+    const request = await LeaveRequest.findById(req.params.id)
+      .populate('student', 'fullName admissionNo')
+      .populate('requestedBy', 'fullName email phone');
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Leave request not found'
+      });
+    }
+
+    if (request.status !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: 'Leave request is not approved'
+      });
+    }
+
+    if (!request.qrPass?.entryTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parent must enter the gate before child exit can be approved'
+      });
+    }
+
+    if (request.qrPass?.childOutTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Child has already been checked out for this leave'
+      });
+    }
+
+    const { generateQRPass } = await import('../utils/qrCodeGenerator.js');
+    if (!request.qrPass.childExitPass?.qrData) {
+      request.qrPass.childExitPass = await generateQRPass(request, 'leave', { phase: 'child_exit' });
+    }
+    if (!request.qrPass.childReturnPass?.qrData) {
+      request.qrPass.childReturnPass = await generateQRPass(request, 'leave', { phase: 'child_return' });
+    }
+
+    request.qrPass.childExitApprovedAt = request.qrPass.childExitApprovedAt || new Date();
+    request.qrPass.childExitApprovedBy = request.qrPass.childExitApprovedBy || req.user.id;
+    await request.save();
+
+    res.json({
+      success: true,
+      message: 'Child exit approved. Parent can now show the Child Exit QR from the parent portal.',
+      request: {
+        requestId: request.requestId,
+        gateStatus: getLeaveGateStatus(request),
+        qrPass: getLeaveQrPassResponse(request.qrPass),
+        parent: {
+          name: request.requestedBy?.fullName,
+          phone: request.requestedBy?.phone
+        },
+        student: request.student ? {
+          name: request.student.fullName,
+          admissionNo: request.student.admissionNo
+        } : null
+      }
+    });
+  } catch (error) {
+    console.error('Error approving child exit:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error approving child exit',
+      error: error.message
+    });
+  }
+});
+
 // @route   POST /api/requests/verify-qr
 // @desc    Verify QR code pass (Security/Admin)
 // @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
@@ -1752,12 +1887,18 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
       });
     }
 
-    const { requestId, type, token, studentId, parentId } = verification.payload;
+    const { requestId, type, token, phase = type === 'leave' ? 'parent_entry' : 'gate' } = verification.payload;
 
     // Find the request
     let request = null;
     if (type === 'leave') {
-      request = await LeaveRequest.findOne({ requestId, 'qrPass.passToken': token })
+      const tokenQuery = phase === 'child_exit'
+        ? { requestId, 'qrPass.childExitPass.passToken': token }
+        : phase === 'child_return'
+          ? { requestId, 'qrPass.childReturnPass.passToken': token }
+          : { requestId, 'qrPass.passToken': token };
+
+      request = await LeaveRequest.findOne(tokenQuery)
         .populate('student', 'fullName admissionNo')
         .populate('requestedBy', 'fullName email phone');
     } else if (type === 'visit') {
@@ -1772,17 +1913,6 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         success: false,
         message: 'Request not found or invalid token',
         valid: false
-      });
-    }
-
-    // Check if already used (for leave requests)
-    if (type === 'leave' && request.qrPass.isUsed) {
-      return res.status(400).json({
-        success: false,
-        message: 'This pass has already been used',
-        valid: false,
-        used: true,
-        usedAt: request.qrPass.usedAt
       });
     }
 
@@ -1844,10 +1974,73 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         await request.save();
       }
     } else if (type === 'leave') {
-      // Mark leave pass as used
-      request.qrPass.isUsed = true;
-      request.qrPass.usedAt = new Date();
-      request.qrPass.usedBy = req.user.id;
+      const now = new Date();
+
+      if (phase === 'child_exit') {
+        if (!request.qrPass.entryTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Parent must enter the gate before child can go out',
+            valid: true
+          });
+        }
+        if (!request.qrPass.childExitApprovedAt) {
+          return res.status(400).json({
+            success: false,
+            message: 'Child exit has not been approved yet',
+            valid: true
+          });
+        }
+        if (request.qrPass.childOutTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Child has already gone out for this leave',
+            valid: true,
+            usedAt: request.qrPass.childOutTime
+          });
+        }
+
+        request.qrPass.childOutTime = now;
+        request.qrPass.exitTime = now;
+        request.qrPass.isUsed = true;
+        request.qrPass.usedAt = now;
+        request.qrPass.usedBy = req.user.id;
+        request.qrPass.childExitPass.usedAt = now;
+        request.qrPass.childExitPass.usedBy = req.user.id;
+      } else if (phase === 'child_return') {
+        if (!request.qrPass.childOutTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Child has not been checked out for this leave yet',
+            valid: true
+          });
+        }
+        if (request.qrPass.childReturnTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Child has already returned to Gurukul',
+            valid: true,
+            usedAt: request.qrPass.childReturnTime
+          });
+        }
+
+        request.qrPass.childReturnTime = now;
+        request.qrPass.childReturnPass.usedAt = now;
+        request.qrPass.childReturnPass.usedBy = req.user.id;
+      } else {
+        if (request.qrPass.entryTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'Parent has already entered for this leave request',
+            valid: true,
+            usedAt: request.qrPass.entryTime
+          });
+        }
+
+        request.qrPass.entryTime = now;
+        request.qrPass.usedBy = req.user.id;
+      }
+
       await request.save();
     }
 
@@ -1857,10 +2050,16 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
       valid: true,
       message: type === 'visit' 
         ? (action === 'entry' ? 'Entry recorded successfully' : 'Exit recorded successfully')
-        : 'Leave pass verified successfully',
+        : phase === 'child_exit'
+          ? 'Child exit recorded. Student is now on leave.'
+          : phase === 'child_return'
+            ? 'Child return recorded. Attendance can continue normally.'
+            : 'Parent entry recorded. Approve child exit from the gate panel when ready.',
       request: {
         requestId: request.requestId,
         type,
+        phase,
+        gateStatus: type === 'leave' ? getLeaveGateStatus(request) : undefined,
         status: request.status,
         student: request.student ? {
           name: request.student.fullName,
@@ -1894,7 +2093,12 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         leaveType: request.leaveType,
         startDate: request.startDate,
         endDate: request.endDate,
-        reason: request.reason
+        reason: request.reason,
+        entryTime: request.qrPass.entryTime,
+        childExitApprovedAt: request.qrPass.childExitApprovedAt,
+        childOutTime: request.qrPass.childOutTime,
+        childReturnTime: request.qrPass.childReturnTime,
+        exitTime: request.qrPass.exitTime
       };
     }
 
@@ -1980,7 +2184,7 @@ router.get('/verify-qr/:requestId', auth, permit(...GATE_ROLES), async (req, res
           email: request.requestedBy.email,
           phone: request.requestedBy.phone
         },
-        qrPass: {
+        qrPass: requestType === 'leave' ? getLeaveQrPassResponse(request.qrPass) : {
           validUntil: request.qrPass.validUntil,
           isUsed: request.qrPass.isUsed,
           usedAt: request.qrPass.usedAt,

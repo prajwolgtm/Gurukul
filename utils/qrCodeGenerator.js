@@ -8,7 +8,7 @@ import { buildIndiaDateTime } from './indiaTime.js';
  * @param {String} requestType - 'leave' or 'visit'
  * @returns {Object} QR code data and image
  */
-export async function generateQRPass(requestData, requestType) {
+export async function generateQRPass(requestData, requestType, options = {}) {
   try {
     // Generate unique pass token
     const passToken = crypto.randomBytes(32).toString('hex');
@@ -35,6 +35,7 @@ export async function generateQRPass(requestData, requestType) {
       requestId: requestData.requestId,
       type: requestType,
       token: passToken,
+      phase: options.phase || (requestType === 'leave' ? 'parent_entry' : 'gate'),
       studentId: requestData.student?._id?.toString() || requestData.student?.toString(),
       parentId: requestData.requestedBy?._id?.toString() || requestData.requestedBy?.toString(),
       validUntil: validUntil.toISOString(),
@@ -57,6 +58,7 @@ export async function generateQRPass(requestData, requestType) {
       qrCode: qrCodeDataURL,
       qrData: qrDataString,
       passToken,
+      phase: qrPayload.phase,
       generatedAt: now,
       validUntil
     };
