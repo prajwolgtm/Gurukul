@@ -9,25 +9,18 @@ import { auth } from '../middleware/auth.js';
 import { permit } from '../middleware/rbac.js';
 import { ROLES } from '../utils/roles.js';
 import { getAcademicYearFromDate, getAcademicYearDates } from '../utils/academicYear.js';
+import { buildIndiaDateTime, formatIndiaDateTime } from '../utils/indiaTime.js';
 
 const router = express.Router();
 
 const GATE_ROLES = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.SECURITY, ROLES.CARETAKER];
 
-const buildDateTimeFromTime = (dateValue, timeValue) => {
-  if (!dateValue || !timeValue) return null;
-  const date = new Date(dateValue);
-  const [hours = 0, minutes = 0] = String(timeValue).split(':').map(Number);
-  date.setHours(hours, minutes, 0, 0);
-  return date;
-};
-
 const getVisitGateWindow = (request) => {
   const visitDate = request.approvedDate || request.preferredDate;
   const startTime = request.approvedStartTime || request.preferredStartTime;
   const endTime = request.approvedEndTime || request.preferredEndTime;
-  const startsAt = buildDateTimeFromTime(visitDate, startTime);
-  const endsAt = buildDateTimeFromTime(visitDate, endTime);
+  const startsAt = buildIndiaDateTime(visitDate, startTime);
+  const endsAt = buildIndiaDateTime(visitDate, endTime);
   const lastEntryAt = endsAt ? new Date(endsAt.getTime() + 60 * 60 * 1000) : null;
   return { startsAt, endsAt, lastEntryAt };
 };
@@ -1801,7 +1794,7 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         if (startsAt && now < startsAt) {
           return res.status(400).json({
             success: false,
-            message: `Entry is allowed only after ${startsAt.toLocaleString()}`,
+            message: `Entry is allowed only after ${formatIndiaDateTime(startsAt)}`,
             valid: true,
             tooEarly: true,
             allowedFrom: startsAt
@@ -1810,7 +1803,7 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         if (lastEntryAt && now > lastEntryAt) {
           return res.status(400).json({
             success: false,
-            message: `Entry window expired at ${lastEntryAt.toLocaleString()}`,
+            message: `Entry window expired at ${formatIndiaDateTime(lastEntryAt)}`,
             valid: false,
             expiredWindow: true,
             allowedUntil: lastEntryAt

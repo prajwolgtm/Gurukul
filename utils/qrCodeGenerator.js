@@ -1,5 +1,6 @@
 import QRCode from 'qrcode';
 import crypto from 'crypto';
+import { buildIndiaDateTime } from './indiaTime.js';
 
 /**
  * Generate QR code pass for leave/visit requests
@@ -25,9 +26,8 @@ export async function generateQRPass(requestData, requestType) {
       // Valid until approved end time + 1 hour gate buffer
       const approvedDate = requestData.approvedDate || requestData.preferredDate;
       const endTime = requestData.approvedEndTime || requestData.preferredEndTime;
-      validUntil = new Date(approvedDate);
-      const [hours, minutes] = endTime.split(':').map(Number);
-      validUntil.setHours(hours + 1, minutes, 0, 0);
+      const endsAt = buildIndiaDateTime(approvedDate, endTime);
+      validUntil = endsAt ? new Date(endsAt.getTime() + 60 * 60 * 1000) : new Date(approvedDate);
     }
     
     // Create QR data payload
