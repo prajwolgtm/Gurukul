@@ -14,6 +14,7 @@ import { buildIndiaDateTime, formatIndiaDateTime } from '../utils/indiaTime.js';
 const router = express.Router();
 
 const GATE_ROLES = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.SECURITY, ROLES.CARETAKER];
+const CHILD_EXIT_APPROVERS = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.COORDINATOR];
 
 const getVisitGateWindow = (request) => {
   const visitDate = request.approvedDate || request.preferredDate;
@@ -33,6 +34,18 @@ const getLeaveGateStatus = (request) => {
   return 'completed';
 };
 
+const getLeaveExpectedDropAt = (request, expectedDropDate, expectedDropTime) => {
+  if (expectedDropDate && expectedDropTime) {
+    return buildIndiaDateTime(expectedDropDate, expectedDropTime);
+  }
+
+  if (request.endDate) {
+    return buildIndiaDateTime(request.endDate, request.endTime || '18:00');
+  }
+
+  return null;
+};
+
 const getLeaveQrPassResponse = (qrPass) => {
   if (!qrPass) return null;
   return {
@@ -43,8 +56,12 @@ const getLeaveQrPassResponse = (qrPass) => {
     usedAt: qrPass.usedAt,
     entryTime: qrPass.entryTime,
     childExitApprovedAt: qrPass.childExitApprovedAt,
+    expectedDropAt: qrPass.expectedDropAt,
+    childExitNotes: qrPass.childExitNotes,
     childOutTime: qrPass.childOutTime,
     childReturnTime: qrPass.childReturnTime,
+    childReturnLateByMinutes: qrPass.childReturnLateByMinutes || 0,
+    lateReturnNotedAt: qrPass.lateReturnNotedAt,
     exitTime: qrPass.exitTime,
     gateStatus: getLeaveGateStatus({ qrPass }),
     childExitPass: qrPass.childExitPass?.qrData ? {
@@ -1787,9 +1804,10 @@ router.put('/gate/visit/:id/checkout', auth, permit(...GATE_ROLES), async (req, 
 
 // @route   PUT /api/requests/gate/leave/:id/approve-child-exit
 // @desc    Approve the child outgoing pass after parent has entered the gate
-// @access  Private (Admin, Principal, Coordinator, Security, Caretaker)
-router.put('/gate/leave/:id/approve-child-exit', auth, permit(...GATE_ROLES), async (req, res) => {
+// @access  Private (Admin, Principal, Coordinator)
+router.put('/gate/leave/:id/approve-child-exit', auth, permit(...CHILD_EXIT_APPROVERS), async (req, res) => {
   try {
+    const { expectedDropDate, expectedDropTime, notes } = req.body;
     const request = await LeaveRequest.findById(req.params.id)
       .populate('student', 'fullName admissionNo')
       .populate('requestedBy', 'fullName email phone');
@@ -1822,6 +1840,14 @@ router.put('/gate/leave/:id/approve-child-exit', auth, permit(...GATE_ROLES), as
       });
     }
 
+    const expectedDropAt = getLeaveExpectedDropAt(request, expectedDropDate, expectedDropTime);
+    if (!expectedDropAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Expected drop date and time are required'
+      });
+    }
+
     const { generateQRPass } = await import('../utils/qrCodeGenerator.js');
     if (!request.qrPass.childExitPass?.qrData) {
       request.qrPass.childExitPass = await generateQRPass(request, 'leave', { phase: 'child_exit' });
@@ -1832,6 +1858,8 @@ router.put('/gate/leave/:id/approve-child-exit', auth, permit(...GATE_ROLES), as
 
     request.qrPass.childExitApprovedAt = request.qrPass.childExitApprovedAt || new Date();
     request.qrPass.childExitApprovedBy = request.qrPass.childExitApprovedBy || req.user.id;
+    request.qrPass.expectedDropAt = expectedDropAt;
+    request.qrPass.childExitNotes = notes || request.qrPass.childExitNotes || '';
     await request.save();
 
     res.json({
@@ -1840,6 +1868,7 @@ router.put('/gate/leave/:id/approve-child-exit', auth, permit(...GATE_ROLES), as
       request: {
         requestId: request.requestId,
         gateStatus: getLeaveGateStatus(request),
+        expectedDropAt: request.qrPass.expectedDropAt,
         qrPass: getLeaveQrPassResponse(request.qrPass),
         parent: {
           name: request.requestedBy?.fullName,
@@ -2025,6 +2054,13 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         }
 
         request.qrPass.childReturnTime = now;
+        if (request.qrPass.expectedDropAt && now > request.qrPass.expectedDropAt) {
+          request.qrPass.childReturnLateByMinutes = Math.ceil((now.getTime() - request.qrPass.expectedDropAt.getTime()) / (60 * 1000));
+          request.qrPass.lateReturnNotedAt = now;
+        } else {
+          request.qrPass.childReturnLateByMinutes = 0;
+          request.qrPass.lateReturnNotedAt = null;
+        }
         request.qrPass.childReturnPass.usedAt = now;
         request.qrPass.childReturnPass.usedBy = req.user.id;
       } else {
@@ -2096,8 +2132,10 @@ router.post('/verify-qr', auth, permit(...GATE_ROLES), async (req, res) => {
         reason: request.reason,
         entryTime: request.qrPass.entryTime,
         childExitApprovedAt: request.qrPass.childExitApprovedAt,
+        expectedDropAt: request.qrPass.expectedDropAt,
         childOutTime: request.qrPass.childOutTime,
         childReturnTime: request.qrPass.childReturnTime,
+        childReturnLateByMinutes: request.qrPass.childReturnLateByMinutes || 0,
         exitTime: request.qrPass.exitTime
       };
     }

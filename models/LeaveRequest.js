@@ -182,11 +182,28 @@ const LeaveRequestSchema = withTimestamps(new mongoose.Schema({
       ref: 'User',
       default: null
     },
+    expectedDropAt: {
+      type: Date,
+      default: null
+    },
+    childExitNotes: {
+      type: String,
+      trim: true,
+      default: ''
+    },
     childOutTime: {
       type: Date,
       default: null
     },
     childReturnTime: {
+      type: Date,
+      default: null
+    },
+    childReturnLateByMinutes: {
+      type: Number,
+      default: 0
+    },
+    lateReturnNotedAt: {
       type: Date,
       default: null
     },
