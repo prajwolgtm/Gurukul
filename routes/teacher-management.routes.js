@@ -9,19 +9,54 @@ import { auth } from '../middleware/auth.js';
 import { ROLES } from '../utils/roles.js';
 
 const router = express.Router();
+const TEACHER_MANAGERS = [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL];
+const TEACHING_ROLES = [ROLES.TEACHER, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.ADMIN];
+
+const syncMissingTeacherProfiles = async () => {
+  const teacherUserIds = await Teacher.distinct('user');
+  const missingUsers = await User.find({
+    role: ROLES.TEACHER,
+    _id: { $nin: teacherUserIds }
+  }).select('_id employeeId isActive isVerified verifiedBy verifiedAt createdAt');
+
+  if (!missingUsers.length) return 0;
+
+  await Teacher.bulkWrite(missingUsers.map(user => ({
+    updateOne: {
+      filter: { user: user._id },
+      update: {
+        $setOnInsert: {
+          employeeId: user.employeeId || `T-${user._id.toString().slice(-8).toUpperCase()}`,
+          status: user.isActive === false ? 'inactive' : 'active',
+          isVerified: user.isVerified !== false,
+          verifiedBy: user.verifiedBy,
+          verifiedAt: user.verifiedAt,
+          joiningDate: user.createdAt || new Date()
+        }
+      },
+      upsert: true
+    }
+  })), { ordered: false });
+
+  return missingUsers.length;
+};
 
 // @route   GET /api/teachers
 // @desc    Get all teachers with filtering
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
+    if (TEACHER_MANAGERS.includes(req.user.role)) {
+      await syncMissingTeacherProfiles();
+    }
+
     const {
       page = 1,
       limit = 20,
       department,
       subDepartment,
       batch,
-      status = 'active',
+      status = '',
       isVerified,
       search
     } = req.query;
@@ -40,10 +75,12 @@ router.get('/', auth, async (req, res) => {
     // Add search to query if provided
     if (search && search.trim() !== '') {
       const searchRegex = new RegExp(search.trim(), 'i');
+      const matchingUsers = await User.find({
+        $or: [{ fullName: searchRegex }, { email: searchRegex }]
+      }).select('_id');
       query.$or = [
         { employeeId: searchRegex },
-        { 'user.fullName': searchRegex },
-        { 'user.email': searchRegex }
+        { user: { $in: matchingUsers.map(user => user._id) } }
       ];
     }
 
@@ -55,7 +92,7 @@ router.get('/', auth, async (req, res) => {
       .populate('subDepartments', 'name code')
       .populate('batches', 'name code academicYear')
       .populate('verifiedBy', 'fullName email')
-      .sort({ 'user.fullName': 1 })
+      .sort({ employeeId: 1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
@@ -123,18 +160,21 @@ router.post('/', auth, async (req, res) => {
     const userRole = req.user.role;
 
     // Check permissions
-    if (![ROLES.ADMIN, ROLES.COORDINATOR].includes(userRole)) {
+    if (!TEACHER_MANAGERS.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin or Coordinator can create teacher accounts'
+        message: 'Only Admin, Coordinator, or Principal can create teacher accounts'
       });
     }
 
     const {
       // User account fields
-      fullName, email, phone, password,
+      fullName, email, phone, password, role = ROLES.TEACHER,
       // Teacher profile fields
-      employeeId, qualification, specialization, experience,
+      employeeId, motherName, spouseName, dateOfBirth, religion, category,
+      nationality, languages, qualification, specialization, veda, shakha,
+      educationalBackground, experience, permanentAddress, aadhaarNumber,
+      panNumber, bankDetails,
       joiningDate, departments, subDepartments, batches,
       subjects, address, emergencyContact, remarks
     } = req.body;
@@ -144,6 +184,13 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Required fields: fullName, email, password, employeeId'
+      });
+    }
+
+    if (!TEACHING_ROLES.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid role. Allowed roles: ${TEACHING_ROLES.join(', ')}`
       });
     }
 
@@ -172,7 +219,7 @@ router.post('/', auth, async (req, res) => {
       email,
       phone,
       password: password, // Plain password - will be hashed by User model's pre-save hook
-      role: ROLES.TEACHER,
+      role,
       isActive: true,
       isVerified: true,
       accountStatus: 'verified',
@@ -256,7 +303,7 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     // Check permissions
-    const canUpdate = [ROLES.ADMIN, ROLES.COORDINATOR].includes(userRole) || 
+    const canUpdate = TEACHER_MANAGERS.includes(userRole) ||
                      teacher.user._id.toString() === userId;
 
     if (!canUpdate) {
@@ -267,7 +314,7 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     const {
-      fullName, phone, employeeId,
+      fullName, phone, role, employeeId,
       motherName, spouseName, dateOfBirth, religion, category, nationality, languages,
       qualification, specialization, veda, shakha, educationalBackground, experience,
       joiningDate, departments, subDepartments, batches,
@@ -275,11 +322,19 @@ router.put('/:id', auth, async (req, res) => {
       aadhaarNumber, panNumber, bankDetails, remarks, status
     } = req.body;
 
+    if (role !== undefined && !TEACHING_ROLES.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid role. Allowed roles: ${TEACHING_ROLES.join(', ')}`
+      });
+    }
+
     // Update user account
-    if (fullName || phone) {
+    if (fullName || phone !== undefined || role) {
       await User.findByIdAndUpdate(teacher.user._id, {
         ...(fullName && { fullName }),
-        ...(phone && { phone })
+        ...(phone !== undefined && { phone }),
+        ...(role && TEACHER_MANAGERS.includes(userRole) && { role })
       });
     }
 
@@ -352,10 +407,10 @@ router.put('/:id/verify', auth, async (req, res) => {
     const userId = req.user.id;
 
     // Check permissions
-    if (![ROLES.ADMIN, ROLES.COORDINATOR].includes(userRole)) {
+    if (!TEACHER_MANAGERS.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin or Coordinator can verify teacher accounts'
+        message: 'Only Admin, Coordinator, or Principal can verify teacher accounts'
       });
     }
 
@@ -423,10 +478,10 @@ router.put('/:id/assignments', auth, async (req, res) => {
     const userRole = req.user.role;
 
     // Check permissions
-    if (![ROLES.ADMIN, ROLES.COORDINATOR].includes(userRole)) {
+    if (!TEACHER_MANAGERS.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin or Coordinator can update teacher assignments'
+        message: 'Only Admin, Coordinator, or Principal can update teacher assignments'
       });
     }
 
@@ -509,10 +564,10 @@ router.delete('/:id', auth, async (req, res) => {
     const userRole = req.user.role;
 
     // Check permissions
-    if (![ROLES.ADMIN, ROLES.COORDINATOR].includes(userRole)) {
+    if (!TEACHER_MANAGERS.includes(userRole)) {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin or Coordinator can delete teacher accounts'
+        message: 'Only Admin, Coordinator, or Principal can delete teacher accounts'
       });
     }
 

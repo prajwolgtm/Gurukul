@@ -182,7 +182,7 @@ router.post('/register-parent', async (req, res) => {
 // @route   POST /api/auth/register-staff
 // @desc    Register staff accounts from admin panel only
 // @access  Private (Admin/Coordinator)
-router.post('/register-staff', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/register-staff', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { fullName, email, password, role } = req.body;
 
@@ -195,7 +195,7 @@ router.post('/register-staff', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), asy
     }
 
     // Validate role (exclude parent as it has special registration)
-    const allowedRoles = [ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY, ROLES.CARETAKER];
+    const allowedRoles = [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY, ROLES.CARETAKER];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,

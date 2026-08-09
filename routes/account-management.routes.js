@@ -12,7 +12,7 @@ const router = express.Router();
 // @route   GET /api/account-management/pending-accounts
 // @desc    Get all pending accounts (especially teachers waiting for verification)
 // @access  Private (Admin/Coordinator only)
-router.get('/pending-accounts', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.get('/pending-accounts', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const pendingAccounts = await User.find({
       accountStatus: 'pending'
@@ -36,7 +36,7 @@ router.get('/pending-accounts', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), as
 // @route   GET /api/account-management/all-accounts
 // @desc    Get all user accounts with filtering options
 // @access  Private (Admin/Coordinator only)
-router.get('/all-accounts', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.get('/all-accounts', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { role, status, verified, active, page = 1, limit = 20 } = req.query;
     
@@ -81,7 +81,7 @@ router.get('/all-accounts', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async 
 // @route   POST /api/account-management/verify-account/:userId
 // @desc    Verify a pending account (especially teacher accounts)
 // @access  Private (Admin/Coordinator only)
-router.post('/verify-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/verify-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { userId } = req.params;
     const { notes } = req.body;
@@ -129,7 +129,7 @@ router.post('/verify-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINAT
 // @route   POST /api/account-management/reject-account/:userId
 // @desc    Reject a pending account
 // @access  Private (Admin/Coordinator only)
-router.post('/reject-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/reject-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { userId } = req.params;
     const { reason } = req.body;
@@ -176,7 +176,7 @@ router.post('/reject-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINAT
 // @route   POST /api/account-management/suspend-account/:userId
 // @desc    Suspend an active account
 // @access  Private (Admin/Coordinator only)
-router.post('/suspend-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/suspend-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { userId } = req.params;
     const { reason } = req.body;
@@ -197,7 +197,7 @@ router.post('/suspend-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINA
     }
 
     // Don't allow suspending Admin or Coordinator accounts
-    if ([ROLES.ADMIN, ROLES.COORDINATOR].includes(user.role)) {
+    if ([ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL].includes(user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Cannot suspend Admin or Coordinator accounts'
@@ -232,7 +232,7 @@ router.post('/suspend-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINA
 // @route   POST /api/account-management/reactivate-account/:userId
 // @desc    Reactivate a suspended account
 // @access  Private (Admin/Coordinator only)
-router.post('/reactivate-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/reactivate-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -272,7 +272,7 @@ router.post('/reactivate-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORD
 // @route   POST /api/account-management/create-staff-account
 // @desc    Create staff accounts (Admin/Coordinator/Principal/Teacher)
 // @access  Private (Admin/Coordinator only)
-router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     console.log('📝 Create staff account request:', {
       user: req.user?.email,
@@ -294,19 +294,11 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     }
 
     // Validate role
-    const allowedRoles = [ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY];
+    const allowedRoles = [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,
         message: `Invalid role. Allowed roles: ${allowedRoles.join(', ')}`
-      });
-    }
-
-    // Only Admin can create Coordinator accounts
-    if (role === ROLES.COORDINATOR && req.user.role !== ROLES.ADMIN) {
-      return res.status(403).json({
-        success: false,
-        message: 'Only Admin can create Coordinator accounts'
       });
     }
 
@@ -335,7 +327,7 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     // or stored in a separate profile/staff model
 
     // Auto-verify high-level roles and teachers
-    if ([ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY].includes(role)) {
+    if ([ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY].includes(role)) {
       userData.isVerified = true;
       userData.accountStatus = 'verified';
       userData.verifiedBy = req.user.id;
@@ -343,6 +335,24 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     }
 
     const user = await User.create(userData);
+
+    // A teacher account must always have a Teacher profile, otherwise it appears
+    // in dashboard totals but cannot be managed from the teacher directory.
+    if (role === ROLES.TEACHER) {
+      await Teacher.create({
+        user: user._id,
+        employeeId: userData.employeeId,
+        qualification,
+        experience,
+        specialization,
+        address,
+        joiningDate,
+        status: 'active',
+        isVerified: true,
+        verifiedBy: req.user.id,
+        verifiedAt: new Date()
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -376,7 +386,7 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
 // @route   GET /api/account-management/account-stats
 // @desc    Get account statistics
 // @access  Private (Admin/Coordinator only)
-router.get('/account-stats', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.get('/account-stats', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const stats = await Promise.all([
       User.countDocuments({ accountStatus: 'pending' }),
@@ -441,7 +451,7 @@ router.get('/account-stats', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async
 // @route   PUT /api/account-management/update-account/:userId
 // @desc    Update user account details
 // @access  Private (Admin/Coordinator only)
-router.put('/update-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.put('/update-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { userId } = req.params;
     const { fullName, email, phone, employeeId, role } = req.body;
@@ -527,7 +537,7 @@ router.put('/update-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORDINATO
 // @route   POST /api/account-management/verify-by-email
 // @desc    Verify a user account by email (quick fix for verified teachers)
 // @access  Private (Admin/Coordinator only)
-router.post('/verify-by-email', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/verify-by-email', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -589,7 +599,7 @@ router.post('/verify-by-email', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), as
 // @route   POST /api/account-management/sync-teacher-verification
 // @desc    Sync verification status from Teacher model to User model for all verified teachers
 // @access  Private (Admin/Coordinator only)
-router.post('/sync-teacher-verification', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/sync-teacher-verification', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     // Find all verified teachers
     const verifiedTeachers = await Teacher.find({ isVerified: true }).populate('user');
@@ -640,7 +650,7 @@ router.post('/sync-teacher-verification', auth, permit(ROLES.ADMIN, ROLES.COORDI
 // @route   POST /api/account-management/reset-password
 // @desc    Reset password for a user by email (Admin/Coordinator only)
 // @access  Private (Admin/Coordinator only)
-router.post('/reset-password', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.post('/reset-password', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const { email, newPassword } = req.body;
 

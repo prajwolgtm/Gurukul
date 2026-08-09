@@ -13,7 +13,7 @@ export const ROLES = {
 export const ACCESS_LEVELS = {
   [ROLES.ADMIN]: 10,
   [ROLES.COORDINATOR]: 10, // Same level as Admin - can do everything
-  [ROLES.PRINCIPAL]: 9,
+  [ROLES.PRINCIPAL]: 10,
   [ROLES.HOD]: 7,
   [ROLES.TEACHER]: 5,
   [ROLES.SECURITY]: 4,
@@ -73,18 +73,21 @@ export const DISCIPLINARY_REPORTERS = new Set([
 // Account Management Permissions
 export const ACCOUNT_MANAGERS = new Set([
   ROLES.ADMIN,
-  ROLES.COORDINATOR // Coordinator can manage all accounts
+  ROLES.COORDINATOR,
+  ROLES.PRINCIPAL
 ]);
 
 export const TEACHER_VERIFIERS = new Set([
   ROLES.ADMIN,
-  ROLES.COORDINATOR // Only Admin and Coordinator can verify teacher accounts
+  ROLES.COORDINATOR,
+  ROLES.PRINCIPAL
 ]);
 
 // Full System Access (All permissions)
 export const FULL_ACCESS_ROLES = new Set([
   ROLES.ADMIN,
-  ROLES.COORDINATOR // Coordinator has same access as Admin
+  ROLES.COORDINATOR,
+  ROLES.PRINCIPAL
 ]);
 
 // Exam Management Permissions
