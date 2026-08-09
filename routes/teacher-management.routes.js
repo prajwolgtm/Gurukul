@@ -5,6 +5,7 @@ import Teacher from '../models/Teacher.js';
 import Department from '../models/Department.js';
 import SubDepartment from '../models/SubDepartment.js';
 import Batch from '../models/Batch.js';
+import TeacherAssignment from '../models/TeacherAssignment.js';
 import { auth } from '../middleware/auth.js';
 import { ROLES } from '../utils/roles.js';
 
@@ -470,6 +471,80 @@ router.put('/:id/verify', auth, async (req, res) => {
   }
 });
 
+// @route   PUT /api/teachers/:id/verification
+// @desc    Change teacher verification in both profile and login account
+// @access  Private (Admin/Coordinator/Principal)
+router.put('/:id/verification', auth, async (req, res) => {
+  try {
+    if (!TEACHER_MANAGERS.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Insufficient permissions' });
+    }
+
+    const { isVerified } = req.body;
+    if (typeof isVerified !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'isVerified must be true or false' });
+    }
+
+    const teacher = await Teacher.findById(req.params.id);
+    if (!teacher) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    const verificationUpdate = isVerified
+      ? { isVerified: true, verifiedBy: req.user.id, verifiedAt: new Date() }
+      : { isVerified: false, verifiedBy: null, verifiedAt: null };
+
+    await Promise.all([
+      Teacher.findByIdAndUpdate(teacher._id, verificationUpdate, { runValidators: true }),
+      User.findByIdAndUpdate(teacher.user, {
+        ...verificationUpdate,
+        accountStatus: isVerified ? 'verified' : 'pending'
+      }, { runValidators: true })
+    ]);
+
+    res.json({
+      success: true,
+      message: `Teacher marked as ${isVerified ? 'verified' : 'pending'}`
+    });
+  } catch (error) {
+    console.error('Error changing teacher verification:', error);
+    res.status(500).json({ success: false, message: 'Error changing verification', error: error.message });
+  }
+});
+
+// @route   PUT /api/teachers/:id/status
+// @desc    Change teacher employment status and login access
+// @access  Private (Admin/Coordinator/Principal)
+router.put('/:id/status', auth, async (req, res) => {
+  try {
+    if (!TEACHER_MANAGERS.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Insufficient permissions' });
+    }
+
+    const allowedStatuses = ['active', 'inactive', 'on_leave', 'terminated'];
+    const { status } = req.body;
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid teacher status' });
+    }
+
+    const teacher = await Teacher.findById(req.params.id);
+    if (!teacher) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    const isActive = ['active', 'on_leave'].includes(status);
+    await Promise.all([
+      Teacher.findByIdAndUpdate(teacher._id, { status }, { runValidators: true }),
+      User.findByIdAndUpdate(teacher.user, { isActive }, { runValidators: true })
+    ]);
+
+    res.json({ success: true, message: `Teacher status changed to ${status}` });
+  } catch (error) {
+    console.error('Error changing teacher status:', error);
+    res.status(500).json({ success: false, message: 'Error changing status', error: error.message });
+  }
+});
+
 // @route   PUT /api/teachers/:id/assignments
 // @desc    Update teacher assignments (departments, sub-departments, batches)
 // @access  Private (Admin/Coordinator only)
@@ -579,6 +654,31 @@ router.delete('/:id', auth, async (req, res) => {
       });
     }
 
+    if (req.query.permanent === 'true') {
+      if (teacher.user.toString() === req.user.id) {
+        return res.status(400).json({ success: false, message: 'You cannot permanently delete your own account' });
+      }
+
+      const teacherUser = await User.findById(teacher.user).select('role');
+      if (teacherUser?.role === ROLES.ADMIN) {
+        const adminCount = await User.countDocuments({ role: ROLES.ADMIN, isActive: true });
+        if (adminCount <= 1) {
+          return res.status(400).json({ success: false, message: 'The last active Admin account cannot be deleted' });
+        }
+      }
+
+      await Promise.all([
+        TeacherAssignment.deleteMany({ teacher: teacher.user }),
+        Department.updateMany({ hod: teacher.user }, { $unset: { hod: 1 } }),
+        SubDepartment.updateMany({ coordinator: teacher.user }, { $unset: { coordinator: 1 } }),
+        Batch.updateMany({ classTeacher: teacher.user }, { $unset: { classTeacher: 1 } })
+      ]);
+      await Teacher.findByIdAndDelete(teacher._id);
+      await User.findByIdAndDelete(teacher.user);
+
+      return res.json({ success: true, message: 'Teacher profile and login account permanently deleted' });
+    }
+
     // Soft delete teacher profile
     await Teacher.findByIdAndUpdate(req.params.id, { status: 'terminated' });
 
@@ -587,7 +687,7 @@ router.delete('/:id', auth, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Teacher account deleted successfully'
+      message: 'Teacher account archived successfully'
     });
   } catch (error) {
     console.error('Error deleting teacher:', error);
