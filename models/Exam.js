@@ -22,7 +22,7 @@ const ExamSchema = new mongoose.Schema({
   },
   examType: {
     type: String,
-    enum: ['unit', 'midterm', 'final', 'assignment', 'project', 'practical'],
+    enum: ['unit', 'quarterly', 'half_yearly', 'annual', 'final', 'assignment', 'project', 'practical', 'midterm'],
     required: true
   },
 
