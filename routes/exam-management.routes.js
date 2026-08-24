@@ -11,6 +11,7 @@ import { auth } from '../middleware/auth.js';
 import { permit } from '../middleware/rbac.js';
 import { ROLES } from '../utils/roles.js';
 import { getCurrentAcademicYear, getAcademicYearFromDate } from '../utils/academicYear.js';
+import { buildExamSubjectsWithTeachers, mergeTeacherIds } from '../utils/subjectAccess.js';
 
 const router = express.Router();
 
@@ -126,7 +127,13 @@ router.get('/subjects', auth, async (req, res) => {
     // By default, only return active subjects for dropdowns
     // But if includeInactive is true, return all subjects (for management view)
     const query = includeInactive === 'true' ? {} : { isActive: true };
-    const subjects = await Subject.find(query).sort({ name: 1 });
+    const subjects = await Subject.find(query)
+      .populate('departments', 'name code')
+      .populate('subDepartments', 'name code department')
+      .populate('batches', 'name code standard')
+      .populate('classes', 'className subject')
+      .populate('teachers.teacher', 'fullName email role')
+      .sort({ name: 1 });
 
     res.json({
       success: true,
@@ -158,7 +165,7 @@ router.post('/subjects', auth, async (req, res) => {
       });
     }
 
-    const { name, code, description, category, credits } = req.body;
+    const { name, code, description, departments, subDepartments, batches, standards, classes, teachers } = req.body;
 
     // Validate required fields
     if (!name || !code) {
@@ -172,8 +179,13 @@ router.post('/subjects', auth, async (req, res) => {
       name,
       code,
       description,
-      category,
-      credits
+      departments: toArray(departments),
+      subDepartments: toArray(subDepartments),
+      batches: toArray(batches),
+      standards: toArray(standards),
+      classes: toArray(classes),
+      teachers: toArray(teachers).map(link => ({ teacher: link?.teacher || link, isPrimary: Boolean(link?.isPrimary) })),
+      createdBy: req.user.id
     });
 
     await subject.save();
@@ -199,10 +211,43 @@ router.post('/subjects', auth, async (req, res) => {
   }
 });
 
+router.put('/subjects/:id', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD), async (req, res) => {
+  try {
+    const subject = await Subject.findById(req.params.id);
+    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+
+    const fields = ['name', 'code', 'description', 'departments', 'subDepartments', 'batches', 'standards', 'classes'];
+    fields.forEach(field => {
+      if (req.body[field] !== undefined) subject[field] = ['name', 'code', 'description'].includes(field)
+        ? req.body[field]
+        : toArray(req.body[field]);
+    });
+    if (req.body.teachers !== undefined) {
+      subject.teachers = toArray(req.body.teachers).map(link => ({
+        teacher: link?.teacher?._id || link?.teacher || link,
+        isPrimary: Boolean(link?.isPrimary)
+      }));
+    }
+    subject.updatedBy = req.user.id;
+    await subject.save();
+    await subject.populate([
+      { path: 'departments', select: 'name code' },
+      { path: 'subDepartments', select: 'name code department' },
+      { path: 'batches', select: 'name code standard' },
+      { path: 'classes', select: 'className subject' },
+      { path: 'teachers.teacher', select: 'fullName email role' }
+    ]);
+    res.json({ success: true, message: 'Subject updated successfully', subject });
+  } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ success: false, message: 'Subject code already exists' });
+    res.status(500).json({ success: false, message: 'Error updating subject', error: error.message });
+  }
+});
+
 // @route   DELETE /api/exams/subjects/:id
 // @desc    Delete a subject (soft delete)
 // @access  Private (Admin, Coordinator only)
-router.delete('/subjects/:id', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), async (req, res) => {
+router.delete('/subjects/:id', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
   try {
     const subject = await Subject.findById(req.params.id);
     
@@ -213,21 +258,7 @@ router.delete('/subjects/:id', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR), asy
       });
     }
 
-    // Check if subject is used in any exams
-    const Exam = (await import('../models/Exam.js')).default;
-    const examsUsingSubject = await Exam.find({
-      'subjects.subject': subject._id,
-      isDeleted: false
-    });
-
-    if (examsUsingSubject.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot delete subject. It is used in ${examsUsingSubject.length} exam(s). Please remove it from exams first.`
-      });
-    }
-
-    // Soft delete
+    // Soft delete preserves historical exam, marks, and result references.
     subject.isActive = false;
     await subject.save();
 
@@ -344,6 +375,7 @@ router.get('/', auth, async (req, res) => {
       .populate('targetSubDepartments', 'name code')
       .populate('targetBatches', 'name code academicYear')
       .populate('subjects.subject', 'name code')
+      .populate('subjects.teacherAccess.teacher', 'fullName email role')
       .populate('customStudents', 'admissionNo fullName')
       .populate('invigilators', 'fullName email role')
       .populate('createdBy', 'fullName email')
@@ -467,6 +499,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('targetSubDepartments', 'name code')
       .populate('targetBatches', 'name code academicYear')
       .populate('subjects.subject', 'name code category')
+      .populate('subjects.teacherAccess.teacher', 'fullName email role')
       .populate('customStudents', 'admissionNo fullName')
       .populate('invigilators', 'fullName email role')
       .populate('createdBy', 'fullName email');
@@ -728,36 +761,8 @@ router.post('/', auth, async (req, res) => {
     }
 
     // Ensure all subjects have required fields
-    const formattedSubjects = subjects.map((s, index) => {
-      const baseSubject = typeof s === 'string' 
-        ? {
-            subject: s,
-            maxMarks: 100,
-            passingMarks: 40,
-            weightage: 1
-          }
-        : {
-            subject: s.subject || s._id,
-            maxMarks: s.maxMarks || 100,
-            passingMarks: s.passingMarks || 40,
-            weightage: s.weightage || 1
-          };
-      
-      // Add division support if enabled (fixed 10 divisions)
-      if (useDivisions) {
-        baseSubject.useDivisions = true;
-        baseSubject.divisions = Array.from({ length: 10 }, (_, i) => ({
-          name: `Division ${i + 1}`,
-          maxMarks: 10,
-          order: i + 1
-        }));
-      } else {
-        baseSubject.useDivisions = false;
-        baseSubject.divisions = [];
-      }
-      
-      return baseSubject;
-    });
+    const formattedSubjects = await buildExamSubjectsWithTeachers(subjects, validSubjects);
+    const automaticTeacherIds = formattedSubjects.flatMap(item => item.teacherAccess.map(link => link.teacher));
 
     // Map to model fields
     // examId will be auto-generated by the model's pre-save hook if not provided
@@ -787,7 +792,7 @@ router.post('/', auth, async (req, res) => {
       instructions,
       venue,
       remarks,
-      invigilators: toArray(accessTeachers || invigilators),
+      invigilators: mergeTeacherIds(toArray(accessTeachers || invigilators), automaticTeacherIds),
       academicYear: examDate ? getAcademicYearFromDate(new Date(examDate)) : getCurrentAcademicYear(),
       createdBy: userId
       // examId will be auto-generated by pre-save hook
@@ -806,6 +811,7 @@ router.post('/', auth, async (req, res) => {
       { path: 'targetSubDepartments', select: 'name code' },
       { path: 'targetBatches', select: 'name code academicYear' },
       { path: 'subjects.subject', select: 'name code' },
+      { path: 'subjects.teacherAccess.teacher', select: 'fullName email role' },
       { path: 'invigilators', select: 'fullName email role' },
       { path: 'createdBy', select: 'fullName email' }
     ]);
@@ -900,22 +906,7 @@ router.put('/:id', auth, async (req, res) => {
         });
       }
 
-      formattedSubjects = subjects.map(s => {
-        if (typeof s === 'string') {
-          return {
-            subject: s,
-            maxMarks: 100,
-            passingMarks: 40,
-            weightage: 1
-          };
-        }
-        return {
-          subject: s.subject || s._id,
-          maxMarks: s.maxMarks || 100,
-          passingMarks: s.passingMarks || 40,
-          weightage: s.weightage || 1
-        };
-      });
+      formattedSubjects = await buildExamSubjectsWithTeachers(subjects, validSubjects);
     }
 
     const updateData = {
@@ -937,7 +928,9 @@ router.put('/:id', auth, async (req, res) => {
       instructions,
       venue,
       remarks,
-      invigilators: accessTeachers !== undefined || invigilators !== undefined ? toArray(accessTeachers || invigilators) : existingExam.invigilators,
+      invigilators: accessTeachers !== undefined || invigilators !== undefined
+        ? mergeTeacherIds(toArray(accessTeachers || invigilators), formattedSubjects.flatMap(item => item.teacherAccess?.map(link => link.teacher) || []))
+        : existingExam.invigilators,
       status
     };
     
@@ -960,6 +953,7 @@ router.put('/:id', auth, async (req, res) => {
       { path: 'targetSubDepartments', select: 'name code' },
       { path: 'targetBatches', select: 'name code academicYear' },
       { path: 'subjects.subject', select: 'name code' },
+      { path: 'subjects.teacherAccess.teacher', select: 'fullName email role' },
       { path: 'invigilators', select: 'fullName email role' },
       { path: 'createdBy', select: 'fullName email' }
     ]);

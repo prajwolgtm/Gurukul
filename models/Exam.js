@@ -125,7 +125,11 @@ const ExamSchema = new mongoose.Schema({
     useDivisions: {
       type: Boolean,
       default: false
-    }
+    },
+    teacherAccess: [{
+      teacher: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+      permission: { type: String, enum: ['view', 'edit'], default: 'edit' }
+    }]
   }],
 
   // Exam Settings

@@ -8,6 +8,7 @@ import { auth } from '../middleware/auth.js';
 import { ROLES } from '../utils/roles.js';
 
 const router = express.Router();
+const canManageAllExamMarks = role => [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL].includes(role);
 
 // @route   GET /api/exam-marks/exam/:examId
 // @desc    Get all marks for an exam
@@ -24,6 +25,17 @@ router.get('/exam/:examId', auth, async (req, res) => {
         success: false,
         message: 'Exam not found'
       });
+    }
+
+    const allSubjectIds = exam.subjects.map(item => item.subject.toString());
+    const allowedSubjectIds = canManageAllExamMarks(req.user.role)
+      ? allSubjectIds
+      : exam.subjects
+          .filter(item => item.teacherAccess?.some(link => link.teacher.toString() === req.user.id.toString()))
+          .map(item => item.subject.toString());
+
+    if (![ROLES.PARENT].includes(req.user.role) && allowedSubjectIds.length === 0) {
+      return res.status(403).json({ success: false, message: 'You do not have access to any subject in this exam.' });
     }
 
     // Build query
@@ -67,7 +79,11 @@ router.get('/exam/:examId', auth, async (req, res) => {
 
     res.json({
       success: true,
-      examMarks: result.docs,
+      examMarks: req.user.role === ROLES.PARENT ? result.docs : result.docs.map(document => {
+        const marks = document.toObject();
+        marks.subjectMarks = marks.subjectMarks.filter(item => allowedSubjectIds.includes((item.subject?._id || item.subject).toString()));
+        return marks;
+      }),
       pagination: {
         currentPage: result.page,
         totalPages: result.totalPages,
@@ -79,7 +95,9 @@ router.get('/exam/:examId', auth, async (req, res) => {
         _id: exam._id,
         name: exam.name,
         examDate: exam.examDate,
-        subjects: exam.subjects
+        subjects: req.user.role === ROLES.PARENT
+          ? exam.subjects
+          : exam.subjects.filter(item => allowedSubjectIds.includes(item.subject.toString()))
       }
     });
 
@@ -230,6 +248,14 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
+    if (!canManageAllExamMarks(userRole)) {
+      const unauthorized = subjectMarks.some(mark => {
+        const config = examDoc.subjects.find(item => item.subject.toString() === (mark.subject?._id || mark.subject).toString());
+        return !config?.teacherAccess?.some(link => link.teacher.toString() === userId.toString() && link.permission === 'edit');
+      });
+      if (unauthorized) return res.status(403).json({ success: false, message: 'You can edit marks only for subjects assigned to you.' });
+    }
+
     if (!studentDoc) {
       return res.status(404).json({
         success: false,
@@ -345,6 +371,10 @@ router.post('/bulk', auth, async (req, res) => {
         success: false,
         message: 'Exam not found'
       });
+    }
+
+    if (!canManageAllExamMarks(userRole)) {
+      return res.status(403).json({ success: false, message: 'Use subject-wise marks entry for your assigned subjects.' });
     }
 
     const results = {
@@ -481,6 +511,17 @@ router.post('/subject-bulk', auth, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Selected subject is not part of this exam'
+      });
+    }
+
+    const fullAccessRoles = [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL];
+    const subjectPermission = examSubject.teacherAccess?.find(link => (link.teacher?._id || link.teacher).toString() === userId.toString());
+    if (!fullAccessRoles.includes(userRole) && subjectPermission?.permission !== 'edit') {
+      return res.status(403).json({
+        success: false,
+        message: subjectPermission?.permission === 'view'
+          ? 'You have view-only access to this subject'
+          : 'You are not assigned to enter marks for this subject'
       });
     }
 
