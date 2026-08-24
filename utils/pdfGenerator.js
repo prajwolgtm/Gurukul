@@ -5,6 +5,14 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const officialLogoPath = path.join(__dirname, '..', 'assets', 'gurukul-official-logo.png');
+
+const addOfficialLogo = (doc) => {
+  if (!fs.existsSync(officialLogoPath)) return;
+  const size = 64;
+  doc.image(officialLogoPath, (doc.page.width - size) / 2, doc.y, { fit: [size, size] });
+  doc.y += size + 8;
+};
 
 /**
  * Generate Subject-wise Marksheet PDF
@@ -18,6 +26,7 @@ export const generateSubjectMarksheet = async (exam, subject, marksEntries, outp
       doc.pipe(stream);
 
       // Header
+      addOfficialLogo(doc);
       doc.fontSize(20).font('Helvetica-Bold')
         .text('VEDA AGAMA SAMSKRUTHA MAHA PATASHALA', { align: 'center' });
       doc.moveDown(0.5);
@@ -162,6 +171,7 @@ export const generateStudentMarksheet = async (student, examData, marksEntries, 
       doc.pipe(stream);
 
       // Header
+      addOfficialLogo(doc);
       doc.fontSize(20).font('Helvetica-Bold')
         .text('VEDA AGAMA SAMSKRUTHA MAHA PATASHALA', { align: 'center' });
       doc.moveDown(0.5);
@@ -338,6 +348,7 @@ export const generateCompleteExamReport = async (exam, results, outputPath) => {
       doc.pipe(stream);
 
       // Header
+      addOfficialLogo(doc);
       doc.fontSize(20).font('Helvetica-Bold')
         .text('VEDA AGAMA SAMSKRUTHA MAHA PATASHALA', { align: 'center' });
       doc.moveDown(0.5);
@@ -497,6 +508,7 @@ export const generateDailyAttendanceReport = async (attendanceData, outputPath) 
       doc.pipe(stream);
 
       // Header
+      addOfficialLogo(doc);
       doc.fontSize(20).font('Helvetica-Bold')
         .text('VEDA AGAMA SAMSKRUTHA MAHA PATASHALA', { align: 'center' });
       doc.moveDown(0.5);
