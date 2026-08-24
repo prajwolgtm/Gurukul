@@ -57,6 +57,14 @@ const ExamMarksSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     },
+    isPresent: {
+      type: Boolean,
+      default: true
+    },
+    absentReason: {
+      type: String,
+      trim: true
+    },
     percentage: {
       type: Number,
       min: 0,
@@ -72,6 +80,14 @@ const ExamMarksSchema = new mongoose.Schema({
       default: false
     },
     remarks: {
+      type: String,
+      trim: true
+    },
+    teacherRemarks: {
+      type: String,
+      trim: true
+    },
+    internalRemarks: {
       type: String,
       trim: true
     }

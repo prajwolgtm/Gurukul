@@ -38,22 +38,15 @@ router.get('/exam/:examId', auth, async (req, res) => {
       return res.status(403).json({ success: false, message: 'You do not have access to any subject in this exam.' });
     }
 
-    // Build query
-    let query = { exam: examId };
-
-    // Add search functionality
+    const studentFilter = { status: 'active', isActive: true };
     if (search) {
-      const students = await Student.find({
-        $or: [
-          { fullName: { $regex: search, $options: 'i' } },
-          { admissionNo: { $regex: search, $options: 'i' } }
-        ],
-        status: { $ne: 'leftout' },
-        isActive: true
-      }).select('_id');
-      
-      query.student = { $in: students.map(s => s._id) };
+      studentFilter.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { admissionNo: { $regex: search, $options: 'i' } }
+      ];
     }
+    const activeStudents = await Student.find(studentFilter).select('_id').lean();
+    const query = { exam: examId, student: { $in: activeStudents.map(student => student._id) } };
 
     const options = {
       page: parseInt(page),
@@ -525,13 +518,33 @@ router.post('/subject-bulk', auth, async (req, res) => {
       });
     }
 
-    const activeRows = marksRows.filter(row => row.student && row.marksObtained !== '' && row.marksObtained !== null && row.marksObtained !== undefined);
+    const activeRows = marksRows.filter(row => row.student && (
+      row.isPresent === false ||
+      (row.divisionMarks && row.divisionMarks.some(mark => mark.marksObtained !== '' && mark.marksObtained !== null && mark.marksObtained !== undefined)) ||
+      (row.marksObtained !== '' && row.marksObtained !== null && row.marksObtained !== undefined)
+    ));
     const results = { success: [], errors: [], total: activeRows.length };
 
     for (let i = 0; i < activeRows.length; i++) {
       const row = activeRows[i];
       try {
-        const marksObtained = Number(row.marksObtained);
+        const divisionMarks = examSubject.useDivisions
+          ? (examSubject.divisions || []).map((division, index) => ({
+              divisionName: division.name,
+              marksObtained: row.isPresent === false ? 0 : Number(row.divisionMarks?.[index]?.marksObtained || 0),
+              maxMarks: division.maxMarks || 10
+            }))
+          : [];
+        const invalidDivision = divisionMarks.find(mark => Number.isNaN(mark.marksObtained) || mark.marksObtained < 0 || mark.marksObtained > mark.maxMarks);
+        if (invalidDivision) {
+          results.errors.push({ row: i + 1, student: row.student, error: `${invalidDivision.divisionName} must be between 0 and ${invalidDivision.maxMarks}` });
+          continue;
+        }
+        const marksObtained = row.isPresent === false
+          ? 0
+          : examSubject.useDivisions
+            ? divisionMarks.reduce((sum, mark) => sum + mark.marksObtained, 0)
+            : Number(row.marksObtained);
         const maxMarks = Number(examSubject.maxMarks || 100);
 
         if (Number.isNaN(marksObtained) || marksObtained < 0 || marksObtained > maxMarks) {
@@ -544,20 +557,19 @@ router.post('/subject-bulk', auth, async (req, res) => {
         }
 
         let examMarks = await ExamMarks.findOne({ exam: examId, student: row.student });
-        const initializedSubjectMarks = exam.subjects.map(subjectConfig => ({
-          subject: subjectConfig.subject._id || subjectConfig.subject,
-          marksObtained: 0,
-          maxMarks: subjectConfig.maxMarks || 100,
-          passingMarks: subjectConfig.passingMarks || 40,
-          useDivisions: subjectConfig.useDivisions || false,
-          divisionMarks: subjectConfig.useDivisions
-            ? (subjectConfig.divisions || []).map(div => ({
-                divisionName: div.name,
-                marksObtained: 0,
-                maxMarks: div.maxMarks || 10
-              }))
-            : []
-        }));
+        const initializedSubjectMarks = [{
+          subject: subjectId,
+          marksObtained,
+          maxMarks,
+          passingMarks: examSubject.passingMarks || 40,
+          useDivisions: examSubject.useDivisions || false,
+          divisionMarks,
+          remarks: row.internalRemarks || row.remarks || undefined,
+          internalRemarks: row.internalRemarks || undefined,
+          teacherRemarks: row.teacherRemarks || undefined,
+          isPresent: row.isPresent !== false,
+          absentReason: row.absentReason || undefined
+        }];
 
         if (!examMarks) {
           examMarks = new ExamMarks({
@@ -579,7 +591,12 @@ router.post('/subject-bulk', auth, async (req, res) => {
           maxMarks,
           passingMarks: examSubject.passingMarks || 40,
           useDivisions: examSubject.useDivisions || false,
-          remarks: row.remarks || undefined
+          divisionMarks,
+          remarks: row.internalRemarks || row.remarks || undefined,
+          internalRemarks: row.internalRemarks || undefined,
+          teacherRemarks: row.teacherRemarks || undefined,
+          isPresent: row.isPresent !== false,
+          absentReason: row.absentReason || undefined
         };
 
         if (subjectIndex >= 0) {
@@ -591,8 +608,9 @@ router.post('/subject-bulk', auth, async (req, res) => {
 
         examMarks.enteredBy = userId;
         examMarks.status = 'submitted';
-        examMarks.isPresent = row.isPresent !== false;
+        examMarks.isPresent = examMarks.subjectMarks.some(mark => mark.isPresent !== false);
         examMarks.teacherRemarks = row.teacherRemarks || examMarks.teacherRemarks;
+        examMarks.remarks = row.internalRemarks || examMarks.remarks;
 
         await examMarks.save();
 

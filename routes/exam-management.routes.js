@@ -422,11 +422,15 @@ router.get('/', auth, async (req, res) => {
       let count = 0;
       try {
         if (exam.selectionType === 'custom') {
-          count = exam.customStudents?.length || 0;
+          count = await Student.countDocuments({
+            _id: { $in: exam.customStudents || [] },
+            isActive: true,
+            status: 'active'
+          });
         } else {
           let studentQuery = { 
             isActive: true, 
-            status: { $ne: 'leftout' }
+            status: 'active'
           };
           
           if (exam.selectionType === 'department') {
@@ -528,7 +532,11 @@ router.get('/:id', auth, async (req, res) => {
 
     if (studentIdsFromResults.length > 0) {
       // Exam has results - show students from results (regardless of current status)
-      studentsWithResults = await Student.find({ _id: { $in: studentIdsFromResults } })
+      studentsWithResults = await Student.find({
+        _id: { $in: studentIdsFromResults },
+        isActive: true,
+        status: 'active'
+      })
         .select('admissionNo fullName department subDepartments batches status')
         .populate('department', 'name code')
         .populate('subDepartments', 'name code')
@@ -539,7 +547,11 @@ router.get('/:id', auth, async (req, res) => {
     // Get eligible students based on exam scope (for exams without results yet)
     if (exam.selectionType === 'custom') {
       // For custom exams, use stored customStudents list
-      eligibleStudents = await Student.find({ _id: { $in: exam.customStudents.map(s => s._id || s) } })
+      eligibleStudents = await Student.find({
+        _id: { $in: exam.customStudents.map(s => s._id || s) },
+        isActive: true,
+        status: 'active'
+      })
         .select('admissionNo fullName department subDepartments batches')
         .populate('department', 'name code')
         .populate('subDepartments', 'name code')
@@ -600,9 +612,10 @@ router.get('/:id', auth, async (req, res) => {
         .sort({ fullName: 1 });
     }
 
-    // If exam has results, prioritize students from results (historical data)
-    // Otherwise, show eligible students
-    const finalStudents = studentsWithResults.length > 0 ? studentsWithResults : eligibleStudents;
+    // Keep pending eligible students visible after partial marks entry.
+    const studentsById = new Map();
+    [...eligibleStudents, ...studentsWithResults].forEach(student => studentsById.set(student._id.toString(), student));
+    const finalStudents = [...studentsById.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
 
     res.json({
       success: true,
@@ -610,9 +623,7 @@ router.get('/:id', auth, async (req, res) => {
       eligibleStudents: finalStudents,
       eligibleStudentsCount: finalStudents.length,
       hasResults: studentsWithResults.length > 0,
-      note: studentsWithResults.length > 0 
-        ? 'Showing students from exam results (historical data preserved)' 
-        : 'Showing eligible students based on exam criteria'
+      note: 'Showing all active eligible students, including pending marks entries'
     });
   } catch (error) {
     console.error('Error fetching exam:', error);
