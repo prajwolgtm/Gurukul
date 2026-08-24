@@ -15,6 +15,12 @@ export const auth = (req, res, next) => {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = payload; // { id, role, email, fullName }
+    if (payload.role === 'Office Staff' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Office Staff accounts have read-only access.'
+      });
+    }
     next();
   } catch (error) {
     return res.status(401).json({ 
@@ -42,4 +48,4 @@ export const optionalAuth = (req, res, next) => {
   }
   
   next();
-}; 
+};

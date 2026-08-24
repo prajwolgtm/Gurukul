@@ -43,7 +43,7 @@ const UserSchema = withTimestamps(new mongoose.Schema({
     type: Boolean,
     default: function() {
       // Auto-verify operational staff accounts.
-      return [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY].includes(this.role);
+      return [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY, ROLES.OFFICE_STAFF].includes(this.role);
     }
   },
   
@@ -64,7 +64,7 @@ const UserSchema = withTimestamps(new mongoose.Schema({
     enum: ['pending', 'verified', 'rejected', 'suspended'],
     default: function() {
       // Auto-verify high-level roles and operational gate staff.
-      if ([ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY].includes(this.role)) {
+      if ([ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY, ROLES.OFFICE_STAFF].includes(this.role)) {
         return 'verified';
       }
       // Others are auto-verified

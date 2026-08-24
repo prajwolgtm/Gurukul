@@ -22,7 +22,7 @@ const router = express.Router();
 // ==================== EXAM REPORTING APIS ====================
 
 // 📊 GET /api/exam-reports/exam/:examId - Complete exam report
-router.get('/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER), async (req, res) => {
+router.get('/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { format = 'summary', includeUnpublished = 'false' } = req.query;
     const { examId: examIdParam } = req.params;
@@ -294,7 +294,7 @@ router.get('/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD
 });
 
 // 👤 GET /api/exam-reports/student/:studentId - Student performance report
-router.get('/student/:studentId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.STUDENT, ROLES.PARENT), async (req, res) => {
+router.get('/student/:studentId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.STUDENT, ROLES.PARENT, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { academicYear, subject, examType, includeUnpublished = 'false' } = req.query;
 
@@ -469,7 +469,7 @@ router.get('/student/:studentId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROL
 });
 
 // 📈 GET /api/exam-reports/comparative - Comparative analysis report
-router.get('/comparative', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD), async (req, res) => {
+router.get('/comparative', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { 
       academicYear, 
@@ -615,7 +615,7 @@ router.get('/comparative', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD)
 });
 
 // 🏆 GET /api/exam-reports/top-performers - Top performers report
-router.get('/top-performers', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER), async (req, res) => {
+router.get('/top-performers', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { 
       examId, 
@@ -726,7 +726,7 @@ router.get('/top-performers', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.H
 });
 
 // 📉 GET /api/exam-reports/defaulters - Poor performers/defaulters report
-router.get('/defaulters', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER), async (req, res) => {
+router.get('/defaulters', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { 
       examId, 
@@ -850,7 +850,7 @@ router.get('/defaulters', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, 
 });
 
 // 📊 GET /api/exam-reports/dashboard - Exam dashboard summary
-router.get('/dashboard', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER), async (req, res) => {
+router.get('/dashboard', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { academicYear } = req.query;
     const currentYear = academicYear || new Date().getFullYear() + '-' + (new Date().getFullYear() + 1);
@@ -996,7 +996,7 @@ router.get('/dashboard', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, R
 });
 
 // 📄 GET /api/exam-reports/pdf/subject/:examId/:subjectId - Generate subject-wise marksheet PDF
-router.get('/pdf/subject/:examId/:subjectId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER), async (req, res) => {
+router.get('/pdf/subject/:examId/:subjectId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { examId, subjectId } = req.params;
 
@@ -1100,7 +1100,7 @@ router.get('/pdf/subject/:examId/:subjectId', auth, permit(ROLES.ADMIN, ROLES.PR
 });
 
 // 📄 GET /api/exam-reports/pdf/student/:studentId - Generate student-wise marksheet PDF for a term
-router.get('/pdf/student/:studentId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.STUDENT, ROLES.PARENT), async (req, res) => {
+router.get('/pdf/student/:studentId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.STUDENT, ROLES.PARENT, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { studentId } = req.params;
     let { academicYear, term, examType } = req.query;
@@ -1248,7 +1248,7 @@ router.get('/pdf/student/:studentId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL,
 });
 
 // 📄 GET /api/exam-reports/pdf/exam/:examId - Generate complete exam report PDF (all students, all subjects)
-router.get('/pdf/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER), async (req, res) => {
+router.get('/pdf/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { examId } = req.params;
 
@@ -1342,4 +1342,4 @@ router.get('/pdf/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES
   }
 });
 
-export default router; 
+export default router;

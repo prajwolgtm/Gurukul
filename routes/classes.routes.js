@@ -17,7 +17,7 @@ const router = express.Router();
 // ==================== CLASS MANAGEMENT APIS ====================
 
 // 🎓 GET /api/classes - Get classes accessible to current user
-router.get('/', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.ADMIN), async (req, res) => {
+router.get('/', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.ADMIN, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const {
       page = 1,
@@ -401,7 +401,7 @@ router.post('/', auth, permit(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.COORDINATOR, R
 });
 
 // 🎓 GET /api/classes/:id - Get specific class details
-router.get('/:id', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.ADMIN), async (req, res) => {
+router.get('/:id', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.ADMIN, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const classData = await SubjectClass.findOne({
       _id: req.params.id,
@@ -723,7 +723,7 @@ router.delete('/:id/students/:studentId', auth, permit(ROLES.TEACHER, ROLES.HOD,
 // ==================== HELPER ROUTES FOR CLASS CREATION ====================
 
 // 🏢 GET /api/classes/helpers/academic-entities - Get departments, sub-departments, and batches for class creation
-router.get('/helpers/academic-entities', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.ADMIN), async (req, res) => {
+router.get('/helpers/academic-entities', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.ADMIN, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const [departments, subDepartments, batches] = await Promise.all([
       Department.find({ isDeleted: false }).select('name code description'),
@@ -754,7 +754,7 @@ router.get('/helpers/academic-entities', auth, permit(ROLES.TEACHER, ROLES.HOD, 
 });
 
 // 👥 GET /api/classes/helpers/students-by-entity - Get students filtered by academic entity
-router.get('/helpers/students-by-entity', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.ADMIN), async (req, res) => {
+router.get('/helpers/students-by-entity', auth, permit(ROLES.TEACHER, ROLES.HOD, ROLES.PRINCIPAL, ROLES.COORDINATOR, ROLES.ADMIN, ROLES.OFFICE_STAFF), async (req, res) => {
   try {
     const { 
       departmentId, 
@@ -840,4 +840,4 @@ router.get('/helpers/students-by-entity', auth, permit(ROLES.TEACHER, ROLES.HOD,
   }
 });
 
-export default router; 
+export default router;

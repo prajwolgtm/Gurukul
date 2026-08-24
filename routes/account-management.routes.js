@@ -272,7 +272,7 @@ router.post('/reactivate-account/:userId', auth, permit(ROLES.ADMIN, ROLES.COORD
 // @route   POST /api/account-management/create-staff-account
 // @desc    Create staff accounts (Admin/Coordinator/Principal/Teacher)
 // @access  Private (Admin/Coordinator only)
-router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL), async (req, res) => {
+router.post('/create-staff-account', auth, permit(ROLES.ADMIN), async (req, res) => {
   try {
     console.log('📝 Create staff account request:', {
       user: req.user?.email,
@@ -294,7 +294,7 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     }
 
     // Validate role
-    const allowedRoles = [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY];
+    const allowedRoles = [ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.HOD, ROLES.TEACHER, ROLES.SECURITY, ROLES.OFFICE_STAFF];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,
@@ -327,7 +327,7 @@ router.post('/create-staff-account', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR
     // or stored in a separate profile/staff model
 
     // Auto-verify high-level roles and teachers
-    if ([ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY].includes(role)) {
+    if ([ROLES.ADMIN, ROLES.COORDINATOR, ROLES.PRINCIPAL, ROLES.TEACHER, ROLES.SECURITY, ROLES.OFFICE_STAFF].includes(role)) {
       userData.isVerified = true;
       userData.accountStatus = 'verified';
       userData.verifiedBy = req.user.id;
