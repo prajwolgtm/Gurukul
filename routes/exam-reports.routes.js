@@ -18,6 +18,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+const hasTeacherExamAccess = (exam, userId) => {
+  const id = userId.toString();
+  return exam.createdBy?._id?.toString() === id || exam.createdBy?.toString() === id ||
+    exam.invigilators?.some(teacher => (teacher?._id || teacher).toString() === id) ||
+    exam.subjects?.some(subject => subject.teacherAccess?.some(link => (link.teacher?._id || link.teacher).toString() === id));
+};
 
 // ==================== EXAM REPORTING APIS ====================
 
@@ -66,6 +72,10 @@ router.get('/exam/:examId', auth, permit(ROLES.ADMIN, ROLES.COORDINATOR, ROLES.P
     }
 
     const examObjectId = exam._id;
+
+    if ([ROLES.TEACHER, ROLES.HOD].includes(req.user.role) && !hasTeacherExamAccess(exam, req.user.id)) {
+      return res.status(403).json({ success: false, message: 'You do not have access to this exam report.' });
+    }
 
     // Get all groups for this exam
     const groups = await ExamGroup.find({

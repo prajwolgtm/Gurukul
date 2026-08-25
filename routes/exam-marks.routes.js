@@ -28,7 +28,8 @@ router.get('/exam/:examId', auth, async (req, res) => {
     }
 
     const allSubjectIds = exam.subjects.map(item => item.subject.toString());
-    const allowedSubjectIds = canManageAllExamMarks(req.user.role)
+    const hasWholeExamView = exam.invigilators?.some(teacher => teacher.toString() === req.user.id.toString());
+    const allowedSubjectIds = canManageAllExamMarks(req.user.role) || hasWholeExamView
       ? allSubjectIds
       : exam.subjects
           .filter(item => item.teacherAccess?.some(link => link.teacher.toString() === req.user.id.toString()))
