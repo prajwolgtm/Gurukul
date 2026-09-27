@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Student from '../models/Student.js';
 import Department from '../models/Department.js';
 import SubDepartment from '../models/SubDepartment.js';
@@ -22,9 +23,19 @@ router.get('/', auth, async (req, res) => {
       batch = '',
       status = 'active',
       includeLeftout = 'false',
-      sortBy = 'fullName',
+      sortBy = 'admissionNo',
       sortOrder = 'asc'
     } = req.query;
+
+    if (!/^\d+$/.test(String(page)) || Number(page) < 1 ||
+        !/^\d+$/.test(String(limit)) || Number(limit) < 1 || Number(limit) > 1000) {
+      return res.status(400).json({ success: false, message: 'Invalid page or page size' });
+    }
+    for (const id of [department, subDepartment, batch]) {
+      if (id && !mongoose.isObjectIdOrHexString(id)) {
+        return res.status(400).json({ success: false, message: 'Invalid department, branch or batch' });
+      }
+    }
 
     // Build query - exclude leftout students by default
     let query = { isActive: true };
@@ -43,28 +54,25 @@ router.get('/', auth, async (req, res) => {
     }
     
     if (department) {
-      query.department = department;
+      query.department = new mongoose.Types.ObjectId(department);
     }
     
     if (subDepartment) {
-      query.subDepartments = { $in: [subDepartment] };
+      query.subDepartments = { $in: [new mongoose.Types.ObjectId(subDepartment)] };
     }
     
     if (batch) {
-      query.batches = { $in: [batch] };
+      query.batches = { $in: [new mongoose.Types.ObjectId(batch)] };
     }
     
-    if (search) {
-      query.$or = [
-        { fullName: { $regex: search, $options: 'i' } },
-        { admissionNo: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } }
-      ];
+    if (String(search).trim()) {
+      const literalSearch = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = ['fullName', 'admissionNo', 'fatherName', 'motherName', 'email', 'phone', 'guardianPhone', 'guardianEmail']
+        .map(field => ({ [field]: { $regex: literalSearch, $options: 'i' } }));
     }
 
     // Handle special sorting for admission numbers (format: "number/year")
-    if (sortBy === 'admissionNo') {
+    if (sortBy === 'admissionNo' || sortBy === 'department') {
       // For admission numbers, we need to sort by year first, then by number
       // We'll use aggregation pipeline for this
       const sortDirection = sortOrder === 'desc' ? -1 : 1;
@@ -130,7 +138,8 @@ router.get('/', auth, async (req, res) => {
         {
           $sort: {
             admissionNoYear: sortDirection,
-            admissionNoNumber: sortDirection
+            admissionNoNumber: sortDirection,
+            _id: 1
           }
         },
         {
@@ -148,6 +157,14 @@ router.get('/', auth, async (req, res) => {
           $limit: parseInt(limit)
         }
       ];
+
+      if (sortBy === 'department') {
+        pipeline.splice(1, 0,
+          { $lookup: { from: Department.collection.name, localField: 'department', foreignField: '_id', as: 'sortDepartment' } });
+        const sortStage = pipeline.find(stage => stage.$sort);
+        sortStage.$sort = { 'sortDepartment.name': sortDirection, admissionNoYear: 1, admissionNoNumber: 1, _id: 1 };
+        pipeline.find(stage => stage.$project).$project.sortDepartment = 0;
+      }
 
       // Execute aggregation
       const students = await Student.aggregate(pipeline);
@@ -190,7 +207,7 @@ router.get('/', auth, async (req, res) => {
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
-      sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 },
+      sort: { [['fullName', 'fatherName', 'status'].includes(sortBy) ? sortBy : 'admissionNo']: sortOrder === 'desc' ? -1 : 1, _id: 1 },
       populate: [
         { path: 'department', select: 'name code' },
         { path: 'subDepartments', select: 'name code' },
